@@ -1,0 +1,18 @@
+[package]
+name = "solana-shadow"
+version = "0.1.0"
+license = "Apache-2.0"
+authors = ["Karim Agha <karim.dev@gmail.com>"]
+description = "Synchronized shadow state of Solana programs available for off-chain processing."
+keywords = ["blockchain", "solana", "web3"]
+homepage = "https://github.com/karim-agha/solana-shadow"
+repository = "https://github.com/karim-agha/solana-shadow"
+edition = "2018"
+include = ["examples/**/*", "src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+
+[dependencies]
+tokio-tungstenite = { version = "0.15", features = ["native-tls"] }
+
+[dev-dependencies]
+anyhow = "1"
+tokio = { version = "1.12", features = ["full"] }
