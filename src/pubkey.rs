@@ -1,1 +1,0 @@
-pub struct Pubkey([u8; 32]);

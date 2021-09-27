@@ -1,6 +1,12 @@
-mod pubkey;
+mod error;
+mod network;
+mod program;
+mod account;
 
-pub use pubkey::Pubkey;
+pub use error::{Error, Result};
+pub use network::Network;
+pub use account::AccountShadow;
+pub use solana_sdk::pubkey::Pubkey;
 
 #[cfg(test)]
 mod tests {
