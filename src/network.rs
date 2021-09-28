@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Network {
   Devnet,
   Testnet,

@@ -1,29 +1,27 @@
-use std::str::FromStr;
-
 use anyhow::Result;
-use solana_shadow::{ClusterMonitor, Network, Pubkey};
+use solana_shadow::{BlockchainShadow, Network};
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
   //
   // https://pyth.network/developers/accounts/
   //
-  let _acc = Pubkey::from_str("2ciUuGZiee5macAMeQ7bHGTJtwcYTgnt6jdmQnnKZrfu")?;
+  tracing_subscriber::fmt::Subscriber::builder()
+    .with_writer(std::io::stdout)
+    .with_env_filter(EnvFilter::try_from_default_env()?)
+    .init();
 
-  let monitor1 = ClusterMonitor::new_from_accounts(
+  let shadow1 = BlockchainShadow::new_from_accounts(
     &vec![
-      Pubkey::from_str("J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix")?, // eth/usd
-      Pubkey::from_str("HovQMDrbAgAYPCmHVSrezcSmkMtXSSUsLDFANExrZh2J")?, // btc/usd
+      "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix".parse()?, // eth/usd
+      "HovQMDrbAgAYPCmHVSrezcSmkMtXSSUsLDFANExrZh2J".parse()?, // btc/usd
     ],
     Network::Devnet,
   )
   .await?;
-  
-  let monitor2 = ClusterMonitor::new_from_program_id(
-    &Pubkey::from_str("gSbePebfvPy7tRqimPoVecS2UsBvYv46ynrzWocc92s")?,
-    Network::Devnet,
-  )
-  .await?;
+
+  shadow1.wait().await?;
 
   Ok(())
 }

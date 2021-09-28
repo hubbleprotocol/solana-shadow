@@ -1,14 +1,15 @@
+mod sync;
 mod account;
 mod error;
 mod network;
 mod program;
-mod monitor;
+mod blockchain;
 
 pub use account::AccountShadow;
 pub use error::{Error, Result};
 pub use network::Network;
 pub use solana_sdk::pubkey::Pubkey;
-pub use monitor::ClusterMonitor;
+pub use blockchain::BlockchainShadow;
 
 #[cfg(test)]
 mod tests {
