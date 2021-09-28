@@ -1,12 +1,14 @@
+mod account;
 mod error;
 mod network;
 mod program;
-mod account;
+mod monitor;
 
+pub use account::AccountShadow;
 pub use error::{Error, Result};
 pub use network::Network;
-pub use account::AccountShadow;
 pub use solana_sdk::pubkey::Pubkey;
+pub use monitor::ClusterMonitor;
 
 #[cfg(test)]
 mod tests {
