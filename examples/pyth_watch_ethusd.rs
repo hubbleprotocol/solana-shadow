@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     .with_env_filter(EnvFilter::try_from_default_env()?)
     .init();
 
-  let shadow1 = BlockchainShadow::new_from_accounts(
+  let shadow = BlockchainShadow::new_from_accounts(
     &vec![
       "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix".parse()?, // eth/usd
       "HovQMDrbAgAYPCmHVSrezcSmkMtXSSUsLDFANExrZh2J".parse()?, // btc/usd
@@ -21,11 +21,11 @@ async fn main() -> Result<()> {
   )
   .await?;
 
-  shadow1.for_each_account(|pubkey, acc| {
+  shadow.for_each_account(|pubkey, acc| {
     println!("[{}]: account: {:?}", pubkey, acc);
   });
 
-  shadow1.wait().await?;
+  shadow.wait().await?;
 
   Ok(())
 }
