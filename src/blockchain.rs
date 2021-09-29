@@ -74,7 +74,7 @@ impl BlockchainShadow {
     }
   }
 
-  pub async fn wait(mut self) -> Result<()> {
+  pub async fn worker(mut self) -> Result<()> {
     if let Some(handle) = self.sync_worker.take() {
       handle.await?;
     }

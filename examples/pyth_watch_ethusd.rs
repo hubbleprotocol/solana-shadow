@@ -39,10 +39,10 @@ async fn main() -> Result<()> {
     println!("ETH/USD: {}", ethprice);
     println!("BTC/USD: {}", btcprice);
     println!();
-    
+
     tokio::time::sleep(Duration::from_secs(3)).await;
   }
 
-  shadow.wait().await?;
+  shadow.worker().await?;
   Ok(())
 }

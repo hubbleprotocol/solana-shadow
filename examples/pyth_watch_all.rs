@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     println!("[{}]: {:?}", pubkey, account);
   });
 
-  local.wait().await?;
+  local.worker().await?;
 
   println!("I will monitor pyth eth/usd prices");
 
