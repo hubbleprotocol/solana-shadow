@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
   sync::{SolanaChange, SolanaChangeListener},
-  Network, Result,
+  Error, Network, Result,
 };
 use dashmap::DashMap;
 use solana_client::rpc_client::RpcClient;
@@ -16,7 +16,7 @@ type AccountsMap = DashMap<Pubkey, Account>;
 pub struct BlockchainShadow {
   network: Network,
   accounts: Arc<AccountsMap>,
-  sync_worker: Option<JoinHandle<()>>,
+  sync_worker: Option<JoinHandle<Result<()>>>,
 }
 
 // public methods
@@ -76,7 +76,7 @@ impl BlockchainShadow {
 
   pub async fn worker(mut self) -> Result<()> {
     if let Some(handle) = self.sync_worker.take() {
-      handle.await?;
+      handle.await??;
     }
 
     Ok(())
@@ -99,19 +99,15 @@ impl BlockchainShadow {
 
       // init subscriptions for all accounts
       for kv in accounts.iter() {
-        match listener.subscribe(*kv.key()).await {
-          Ok(_) => debug!("subscribing to account: {}", kv.key()),
-          Err(e) => warn!("subscription to {} failed: {:?}", kv.key(), e),
-        };
+        listener.subscribe(*kv.key()).await?;
+        debug!("subscribing to account: {}", kv.key());
       }
 
-      loop {
-        match listener.recv().await {
-          Ok(Some(change)) => Self::on_solana_change(accounts.clone(), change),
-          Ok(None) => warn!("listener stream closed."), // todo: implement retry logic
-          Err(e) => warn!("recv error: {:?}", e),
-        }
+      while let Some(change) = listener.recv().await? {
+        Self::on_solana_change(accounts.clone(), change);
       }
+
+      Ok::<(), Error>(())
     });
 
     Ok(Self {
