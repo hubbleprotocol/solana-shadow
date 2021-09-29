@@ -1,15 +1,13 @@
-mod sync;
-mod account;
+mod blockchain;
 mod error;
 mod network;
 mod program;
-mod blockchain;
+mod sync;
 
-pub use account::AccountShadow;
+pub use blockchain::BlockchainShadow;
 pub use error::{Error, Result};
 pub use network::Network;
 pub use solana_sdk::pubkey::Pubkey;
-pub use blockchain::BlockchainShadow;
 
 #[cfg(test)]
 mod tests {

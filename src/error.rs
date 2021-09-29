@@ -1,9 +1,7 @@
 use solana_client::client_error::ClientError;
 use thiserror::Error;
-use tokio::{sync::watch::error::SendError, task::JoinError};
+use tokio::task::JoinError;
 use tokio_tungstenite::tungstenite::Error as WsError;
-
-use crate::account::AccountSnapshot;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -21,9 +19,6 @@ pub enum Error {
 
   #[error("Internal synchronization error")]
   InternalSynchronizationError(#[from] JoinError),
-
-  #[error("Internal synchronization error")]
-  InternalSubscriptionError(#[from] SendError<AccountSnapshot>),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

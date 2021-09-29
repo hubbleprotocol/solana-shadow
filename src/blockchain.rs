@@ -2,19 +2,21 @@ use std::sync::Arc;
 
 use crate::{
   sync::{SolanaChange, SolanaChangeListener},
-  AccountShadow, Error, Network, Result,
+  Network, Result,
 };
 use dashmap::DashMap;
-use solana_client::{client_error::reqwest::Url, rpc_client::RpcClient};
-use solana_sdk::pubkey::Pubkey;
+use solana_client::rpc_client::RpcClient;
+use solana_sdk::{account::Account, pubkey::Pubkey};
 
 use tokio::task::JoinHandle;
 use tracing::{debug, trace};
 
+type AccountsMap = DashMap<Pubkey, Account>;
+
 pub struct BlockchainShadow {
   network: Network,
+  accounts: Arc<AccountsMap>,
   sync_worker: Option<JoinHandle<()>>,
-  accounts: Arc<DashMap<Pubkey, AccountShadow>>,
 }
 
 // public methods
@@ -29,7 +31,7 @@ impl BlockchainShadow {
         .into_iter()
         .zip(accounts.iter())
         .filter(|(o, _)| o.is_some())
-        .map(|(acc, key)| AccountShadow::new(*key, acc.unwrap()))
+        .map(|(acc, key)| (*key, acc.unwrap()))
         .collect(),
       network,
     )
@@ -43,10 +45,7 @@ impl BlockchainShadow {
     let accounts = BlockchainShadow::accounts_graph(&program, &network).await?;
     trace!(
       "Initialized accounts graph: {:?}",
-      &accounts
-        .iter()
-        .map(|acc| acc.pubkey())
-        .collect::<Vec<&Pubkey>>()
+      &accounts.iter().map(|(k, _)| k).collect::<Vec<&Pubkey>>()
     );
     BlockchainShadow::new_from_account_shadows(accounts, network).await
   }
@@ -59,6 +58,21 @@ impl BlockchainShadow {
     self.accounts.len()
   }
 
+  pub fn for_each_account(&self, op: impl Fn(&Pubkey, &Account)) {
+    for pair in self.accounts.iter() {
+      let pubkey = pair.pair().0;
+      let account = pair.pair().1;
+      op(pubkey, &account);
+    }
+  }
+
+  pub fn get_account(&self, key: &Pubkey) -> Option<Account> {
+    match self.accounts.get(key) { // this is rw-locked
+      None => None,
+      Some(acc) => Some(acc.clone()),
+    }
+  }
+
   pub async fn wait(mut self) -> Result<()> {
     if let Some(handle) = self.sync_worker.take() {
       handle.await?;
@@ -68,35 +82,27 @@ impl BlockchainShadow {
   }
 }
 
-// internal methods
+// internal associated methods
 impl BlockchainShadow {
   async fn new_from_account_shadows(
-    accounts: Vec<AccountShadow>,
+    accounts: Vec<(Pubkey, Account)>,
     network: Network,
   ) -> Result<Self> {
     let pubkeys: Vec<Pubkey> =
-      accounts.iter().map(|a| a.pubkey().clone()).collect();
+      accounts.iter().map(|(k, _)| k.clone()).collect();
 
-    let accounts: Arc<DashMap<Pubkey, AccountShadow>> = Arc::new(
-      accounts
-        .into_iter()
-        .map(|acc| (acc.pubkey().clone(), acc))
-        .collect(),
-    );
+    let accounts: Arc<AccountsMap> =
+      Arc::new(accounts.into_iter().map(|(k, v)| (k, v)).collect());
 
+    let accounts_ref = accounts.clone();
     let listener = SolanaChangeListener::new(&pubkeys, network.clone())?;
-    let worker = tokio::spawn(async move {
-      let mut listener = listener;
 
+    let worker = tokio::spawn(async move {
+      let accounts = accounts_ref;
+      let mut listener = listener;
       while let Some(change) = listener.recv().await {
         trace!("recived blockchain update: {:?}", &change);
-
-        match change {
-          SolanaChange::Account(acc) => trace!("account changed: {:?}", &acc),
-          SolanaChange::ProgramChange(prog) => {
-            trace!("program changed: {:?}", &prog)
-          }
-        }
+        BlockchainShadow::process_solana_change(accounts.clone(), change);
       }
     });
 
@@ -110,14 +116,22 @@ impl BlockchainShadow {
   async fn accounts_graph(
     program_id: &Pubkey,
     network: &Network,
-  ) -> Result<Vec<AccountShadow>> {
+  ) -> Result<Vec<(Pubkey, Account)>> {
     debug!("Initializing accounts graph for program {}", &program_id);
     Ok(
       RpcClient::new(network.rpc_url())
         .get_program_accounts(&program_id)?
         .into_iter()
-        .map(|(key, acc)| AccountShadow::new(key, acc))
         .collect(),
     )
+  }
+
+  fn process_solana_change(accounts: Arc<AccountsMap>, change: SolanaChange) {
+    match change {
+      SolanaChange::Account(acc) => trace!("account changed: {:?}", &acc),
+      SolanaChange::ProgramChange(prog) => {
+        trace!("program changed: {:?}", &prog)
+      }
+    }
   }
 }

@@ -21,6 +21,10 @@ async fn main() -> Result<()> {
   )
   .await?;
 
+  shadow1.for_each_account(|pubkey, acc| {
+    println!("[{}]: account: {:?}", pubkey, acc);
+  });
+
   shadow1.wait().await?;
 
   Ok(())
