@@ -14,10 +14,10 @@ async fn main() -> Result<()> {
 
   let shadow = BlockchainShadow::new_from_accounts(
     &vec![
-      "J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix".parse()?, // eth/usd
-      "HovQMDrbAgAYPCmHVSrezcSmkMtXSSUsLDFANExrZh2J".parse()?, // btc/usd
+      "JBu1AL4obBcCMqKBBxhpWCNUt136ijcuMZLFvTP7iWdB".parse()?, // eth/usd
+      "GVXRSBjFk6e6J3NbVPXohDJetcTjaeeuykUpbQF8UoMU".parse()?, // btc/usd
     ],
-    Network::Devnet,
+    Network::Mainnet,
   )
   .await?;
 

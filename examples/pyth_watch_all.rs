@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use anyhow::Result;
 use solana_shadow::{BlockchainShadow, Network};
 use tracing_subscriber::EnvFilter;

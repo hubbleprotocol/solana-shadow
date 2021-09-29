@@ -5,11 +5,12 @@ use crate::{
   Network, Result,
 };
 use dashmap::DashMap;
+use futures::future::{join_all, try_join_all};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
 
 use tokio::task::JoinHandle;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 type AccountsMap = DashMap<Pubkey, Account>;
 
@@ -67,7 +68,8 @@ impl BlockchainShadow {
   }
 
   pub fn get_account(&self, key: &Pubkey) -> Option<Account> {
-    match self.accounts.get(key) { // this is rw-locked
+    match self.accounts.get(key) {
+      // this is rw-locked
       None => None,
       Some(acc) => Some(acc.clone()),
     }
@@ -88,19 +90,24 @@ impl BlockchainShadow {
     accounts: Vec<(Pubkey, Account)>,
     network: Network,
   ) -> Result<Self> {
-    let pubkeys: Vec<Pubkey> =
-      accounts.iter().map(|(k, _)| k.clone()).collect();
 
-    let accounts: Arc<AccountsMap> =
-      Arc::new(accounts.into_iter().map(|(k, v)| (k, v)).collect());
+    let listener = SolanaChangeListener::new(network.clone()).await?;
+    let accounts: Arc<AccountsMap> = Arc::new(accounts.into_iter().collect());
 
     let accounts_ref = accounts.clone();
-    let listener = SolanaChangeListener::new(&pubkeys, network.clone())?;
-
     let worker = tokio::spawn(async move {
       let accounts = accounts_ref;
       let mut listener = listener;
-      while let Some(change) = listener.recv().await {
+
+      // init subscriptions for all accounts
+      for kv in accounts.iter() {
+        match listener.subscribe(*kv.key()).await {
+          Ok(_) => debug!("subscribing to account: {}", kv.key()),
+          Err(e) => warn!("subscription to {} failed: {:?}", kv.key(), e),
+        };
+      }
+
+      while let Ok(Some(change)) = listener.recv().await {
         trace!("recived blockchain update: {:?}", &change);
         BlockchainShadow::process_solana_change(accounts.clone(), change);
       }
@@ -128,10 +135,13 @@ impl BlockchainShadow {
 
   fn process_solana_change(accounts: Arc<AccountsMap>, change: SolanaChange) {
     match change {
-      SolanaChange::Account(acc) => trace!("account changed: {:?}", &acc),
+      SolanaChange::Account((key, acc)) => {
+        trace!("account {} changed: {:?}", &key, &acc);
+        accounts.insert(key, acc);
+      }
       SolanaChange::ProgramChange(prog) => {
         trace!("program changed: {:?}", &prog)
       }
-    }
+    };
   }
 }
