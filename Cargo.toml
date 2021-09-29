@@ -13,7 +13,7 @@ include = ["examples/**/*", "src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
 [dependencies]
 bs58 = "0.4"
 borsh = "0.9"
-dashmap = "*"
+dashmap = "4.0.2"
 thiserror = "1"
 futures = "0.3"
 tracing = "0.1.28"

@@ -9,7 +9,7 @@ use solana_client::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
 
 use tokio::task::JoinHandle;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 type AccountsMap = DashMap<Pubkey, Account>;
 
