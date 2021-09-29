@@ -3,6 +3,7 @@ mod error;
 mod network;
 mod program;
 mod sync;
+mod message;
 
 pub use blockchain::BlockchainShadow;
 pub use error::{Error, Result};

@@ -5,7 +5,6 @@ use crate::{
   Network, Result,
 };
 use dashmap::DashMap;
-use futures::future::{join_all, try_join_all};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
 
@@ -90,7 +89,6 @@ impl BlockchainShadow {
     accounts: Vec<(Pubkey, Account)>,
     network: Network,
   ) -> Result<Self> {
-
     let listener = SolanaChangeListener::new(network.clone()).await?;
     let accounts: Arc<AccountsMap> = Arc::new(accounts.into_iter().collect());
 
@@ -107,9 +105,12 @@ impl BlockchainShadow {
         };
       }
 
-      while let Ok(Some(change)) = listener.recv().await {
-        trace!("recived blockchain update: {:?}", &change);
-        BlockchainShadow::process_solana_change(accounts.clone(), change);
+      loop {
+        match listener.recv().await {
+          Ok(Some(change)) => Self::on_solana_change(accounts.clone(), change),
+          Ok(None) => warn!("listener stream closed."), // todo: implement retry logic
+          Err(e) => warn!("recv error: {:?}", e),
+        }
       }
     });
 
@@ -133,14 +134,15 @@ impl BlockchainShadow {
     )
   }
 
-  fn process_solana_change(accounts: Arc<AccountsMap>, change: SolanaChange) {
+  fn on_solana_change(accounts: Arc<AccountsMap>, change: SolanaChange) {
+    debug!("processing solana change: {:?}", &change);
     match change {
       SolanaChange::Account((key, acc)) => {
-        trace!("account {} changed: {:?}", &key, &acc);
+        debug!("account {} changed: {:?}", &key, &acc);
         accounts.insert(key, acc);
       }
       SolanaChange::ProgramChange(prog) => {
-        trace!("program changed: {:?}", &prog)
+        debug!("program changed: {:?}", &prog)
       }
     };
   }
