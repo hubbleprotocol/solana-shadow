@@ -19,6 +19,8 @@ async fn main() -> Result<()> {
   // create an offline shadow of the on-chain data.
   // whenever the data change on-chain those changes
   // will be reflected immediately in this type.
+  // here it is "mut" because later on we are adding a new
+  // account after 15 seconds.
   let mut shadow =
     BlockchainShadow::new_for_accounts(&vec![ethusd, btcusd], Network::Mainnet)
       .await?;
