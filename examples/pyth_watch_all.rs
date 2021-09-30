@@ -9,12 +9,13 @@ async fn main() -> Result<()> {
     .with_env_filter(EnvFilter::try_from_default_env()?)
     .init();
 
-  let prog = "oraogph9PTJAYMfhpmkxNfG6TSCftK4kQyqaNU5YXao".parse()?;
-  let network = Network::Devnet;
-  let local = BlockchainShadow::new_from_program_id(&prog, network).await?;
+  // this is the prog id that owns all pyth oracles on mainnet
+  let prog = "FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH".parse()?;
+  let network = Network::Mainnet;
+  let local = BlockchainShadow::new_for_program(&prog, network).await?;
 
   local.for_each_account(|pubkey, account| {
-    println!("[{}]: {:?}", pubkey, account);
+    println!(" - [{}]: {:?}", pubkey, account);
   });
 
   local.worker().await?;

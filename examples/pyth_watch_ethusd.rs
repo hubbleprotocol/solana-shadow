@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
   // create an offline shadow of the on-chain data.
   // whenever the data change on-chain those changes
   // will be reflected immediately in this type.
-  let shadow = BlockchainShadow::new_from_accounts(
+  let shadow = BlockchainShadow::new_for_accounts(
     &vec![ethusd, btcusd],
     Network::Mainnet,
   )
@@ -30,9 +30,11 @@ async fn main() -> Result<()> {
   // everytime any account is accessed, then its contents
   // will reflect the latest version on-chain.
   for _ in 0.. {
+    // access through a method
     let ethacc = &shadow.get_account(&ethusd).unwrap();
     let ethprice = cast::<Price>(&ethacc.data).agg.price;
 
+    // access through index operator
     let btcacc = &shadow.get_account(&btcusd).unwrap();
     let btcprice = cast::<Price>(&btcacc.data).agg.price;
 

@@ -1,53 +1,107 @@
-use std::sync::Arc;
-
 use crate::{
-  sync::{SolanaChange, SolanaChangeListener},
+  sync::{AccountUpdate, SolanaChangeListener, SubRequest},
   Error, Network, Result,
 };
 use dashmap::DashMap;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
-
-use tokio::task::JoinHandle;
-use tracing::{debug, trace};
+use std::sync::Arc;
+use tokio::{
+  sync::mpsc::{unbounded_channel, UnboundedSender},
+  task::JoinHandle,
+};
+use tracing::debug;
 
 type AccountsMap = DashMap<Pubkey, Account>;
 
+/// The entry point to the Solana Blockchain Shadow API
+///
+/// This type allows its users to monitor several individual
+/// accounts or all accounts of a program, or a combination
+/// of both for any changes to those accounts and have the
+/// most recent version of those accounts available locally
+/// and accessible as if they were stored in a local
+/// `hashmap<Pubkey, Account>`
 pub struct BlockchainShadow {
   network: Network,
   accounts: Arc<AccountsMap>,
+  sub_req: Option<UnboundedSender<SubRequest>>,
   sync_worker: Option<JoinHandle<Result<()>>>,
 }
 
 // public methods
 impl BlockchainShadow {
-  pub async fn new_from_accounts(
+  pub async fn new(network: Network) -> Result<Self> {
+    let mut instance = Self {
+      network: network.clone(),
+      accounts: Arc::new(AccountsMap::new()),
+      sync_worker: None,
+      sub_req: None,
+    };
+    instance.create_worker().await?;
+    Ok(instance)
+  }
+
+  pub async fn add_accounts(&mut self, accounts: &[Pubkey]) -> Result<()> {
+    let initial: Vec<_> = RpcClient::new(self.network.rpc_url())
+      .get_multiple_accounts(accounts)?
+      .into_iter()
+      .zip(accounts.iter())
+      .filter(|(o, _)| o.is_some())
+      .map(|(acc, key)| (*key, acc.unwrap()))
+      .collect();
+
+    for (key, acc) in initial {
+      self.accounts.insert(key, acc);
+      self
+        .sub_req
+        .clone()
+        .unwrap()
+        .send(SubRequest::Account(key))
+        .map_err(|_| Error::InternalError)?;
+    }
+
+    Ok(())
+  }
+
+  pub async fn add_account(&mut self, account: &Pubkey) -> Result<()> {
+    self.add_accounts(&[*account]).await
+  }
+
+  pub async fn add_program(&mut self, program_id: &Pubkey) -> Result<()> {
+    let initial: Vec<_> = RpcClient::new(self.network.rpc_url())
+      .get_program_accounts(&program_id)?
+      .into_iter()
+      .collect();
+
+    for (key, acc) in initial {
+      self.accounts.insert(key, acc);
+    }
+    self
+      .sub_req
+      .clone()
+      .unwrap()
+      .send(SubRequest::Program(*program_id))
+      .map_err(|_| Error::InternalError)?;
+    Ok(())
+  }
+
+  pub async fn new_for_accounts(
     accounts: &[Pubkey],
     network: Network,
   ) -> Result<Self> {
-    BlockchainShadow::new_from_account_shadows(
-      RpcClient::new(network.rpc_url())
-        .get_multiple_accounts(accounts)?
-        .into_iter()
-        .zip(accounts.iter())
-        .filter(|(o, _)| o.is_some())
-        .map(|(acc, key)| (*key, acc.unwrap()))
-        .collect(),
-      network,
-    )
-    .await
+    let mut instance = BlockchainShadow::new(network).await?;
+    instance.add_accounts(accounts).await?;
+    Ok(instance)
   }
 
-  pub async fn new_from_program_id(
+  pub async fn new_for_program(
     program: &Pubkey,
     network: Network,
   ) -> Result<Self> {
-    let accounts = BlockchainShadow::accounts_graph(&program, &network).await?;
-    trace!(
-      "Initialized accounts graph: {:?}",
-      &accounts.iter().map(|(k, _)| k).collect::<Vec<&Pubkey>>()
-    );
-    BlockchainShadow::new_from_account_shadows(accounts, network).await
+    let mut instance = BlockchainShadow::new(network).await?;
+    instance.add_program(program).await?;
+    Ok(instance)
   }
 
   pub const fn network(&self) -> &Network {
@@ -75,71 +129,40 @@ impl BlockchainShadow {
   }
 
   pub async fn worker(mut self) -> Result<()> {
-    if let Some(handle) = self.sync_worker.take() {
-      handle.await??;
+    match self.sync_worker.take() {
+      Some(handle) => Ok(handle.await??),
+      None => Err(Error::WorkerDead),
     }
-
-    Ok(())
   }
 }
 
-// internal associated methods
 impl BlockchainShadow {
-  async fn new_from_account_shadows(
-    accounts: Vec<(Pubkey, Account)>,
-    network: Network,
-  ) -> Result<Self> {
-    let listener = SolanaChangeListener::new(network.clone()).await?;
-    let accounts: Arc<AccountsMap> = Arc::new(accounts.into_iter().collect());
+  async fn create_worker(&mut self) -> Result<()> {
+    // subscription requests from blockchain shadow -> listener
+    let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
 
-    let accounts_ref = accounts.clone();
-    let worker = tokio::spawn(async move {
-      let accounts = accounts_ref;
-      let mut listener = listener;
+    self.sub_req = Some(subscribe_tx);
+    let network = self.network.clone();
+    let accs_ref = self.accounts.clone();
 
-      // init subscriptions for all accounts
-      for kv in accounts.iter() {
-        listener.subscribe(*kv.key()).await?;
-        debug!("subscribing to account: {}", kv.key());
+    self.sync_worker = Some(tokio::spawn(async move {
+      let mut listener = SolanaChangeListener::new(network).await?;
+      loop {
+        tokio::select! {
+          Ok(Some(AccountUpdate { pubkey, account })) = listener.recv() => {
+            debug!("account {} updated", &pubkey);
+            accs_ref.insert(pubkey, account);
+          },
+          Some(subreq) = subscribe_rx.recv() => {
+            match subreq {
+              SubRequest::Account(pubkey) => listener.subscribe_account(pubkey).await?,
+              SubRequest::Program(pubkey) => listener.subscribe_program(pubkey).await?
+            }
+          }
+        };
       }
+    }));
 
-      while let Some(change) = listener.recv().await? {
-        Self::on_solana_change(accounts.clone(), change);
-      }
-
-      Ok::<(), Error>(())
-    });
-
-    Ok(Self {
-      network: network.clone(),
-      sync_worker: Some(worker),
-      accounts: accounts.clone(),
-    })
-  }
-
-  async fn accounts_graph(
-    program_id: &Pubkey,
-    network: &Network,
-  ) -> Result<Vec<(Pubkey, Account)>> {
-    debug!("Initializing accounts graph for program {}", &program_id);
-    Ok(
-      RpcClient::new(network.rpc_url())
-        .get_program_accounts(&program_id)?
-        .into_iter()
-        .collect(),
-    )
-  }
-
-  fn on_solana_change(accounts: Arc<AccountsMap>, change: SolanaChange) {
-    debug!("processing solana change: {:?}", &change);
-    match change {
-      SolanaChange::Account((key, acc)) => {
-        debug!("account {} changed: {:?}", &key, &acc);
-        accounts.insert(key, acc);
-      }
-      SolanaChange::ProgramChange(prog) => {
-        debug!("program changed: {:?}", &prog)
-      }
-    };
+    Ok(())
   }
 }

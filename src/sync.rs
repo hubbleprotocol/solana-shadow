@@ -24,22 +24,15 @@ type WsWriter = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 type WsReader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 #[derive(Debug)]
-pub(crate) struct ProgramChange;
+pub(crate) struct AccountUpdate {
+  pub pubkey: Pubkey,
+  pub account: Account,
+}
 
-/// Changes communicated by the solana cluster
-/// to which we are subscribed.
 #[derive(Debug)]
-pub(crate) enum SolanaChange {
-  /// changes to the contents to one account.
-  Account((Pubkey, Account)),
-
-  /// changes to a program
-  ///
-  /// This includes new owned accounts, etc, so whenever
-  /// a program creates a new account it gets detected
-  /// automatically and an account subscription is created
-  /// for it.
-  ProgramChange(ProgramChange),
+pub(crate) enum SubRequest {
+  Account(Pubkey),
+  Program(Pubkey),
 }
 
 pub(crate) struct SolanaChangeListener {
@@ -74,14 +67,22 @@ impl SolanaChangeListener {
     })
   }
 
-  /// Send a subscription request to Solana Cluster.
+  /// Send an account subscription request to Solana Cluster.
   ///
   /// When this method returns, it does not mean that a subscription
   /// has been successfully created, but only the the request was
   /// sent successfully.
-  pub async fn subscribe(&mut self, account: Pubkey) -> Result<()> {
+  pub async fn subscribe_account(&mut self, account: Pubkey) -> Result<()> {
     let reqid = self.reqid.fetch_add(1, Ordering::SeqCst);
-    let request = Self::account_subscription_request(&account, reqid);
+    let request = json!({
+      "jsonrpc": "2.0",
+      "id": reqid,
+      "method": "accountSubscribe",
+      "params": [account.to_string(), {
+        "encoding": "jsonParsed",
+        "commitment": "finalized"
+      }]
+    });
 
     // map jsonrpc request id to pubkey, later on when
     // the websocket responds with a subscription id,
@@ -91,11 +92,40 @@ impl SolanaChangeListener {
     // solana-generated subscription id to identify
     // an account.
     self.pending.insert(reqid, account.clone());
-    self.writer.send(Message::Text(request)).await?;
+    self.writer.send(Message::Text(request.to_string())).await?;
     Ok(())
   }
 
-  pub async fn recv(&mut self) -> Result<Option<SolanaChange>> {
+  /// Send a program subscription request to Solana Cluster.
+  ///
+  /// When this method returns, it does not mean that a subscription
+  /// has been successfully created, but only the the request was
+  /// sent successfully.
+  pub async fn subscribe_program(&mut self, account: Pubkey) -> Result<()> {
+    let reqid = self.reqid.fetch_add(1, Ordering::SeqCst);
+    let request = json!({
+      "jsonrpc": "2.0",
+      "id": reqid,
+      "method": "programSubscribe",
+      "params": [account.to_string(), {
+        "encoding": "jsonParsed",
+        "commitment": "finalized"
+      }]
+    });
+
+    // map jsonrpc request id to pubkey, later on when
+    // the websocket responds with a subscription id,
+    // the id will be correlated with a public key.
+    // account change notifications don't mention
+    // the account public key, instead they use the
+    // solana-generated subscription id to identify
+    // an account.
+    self.pending.insert(reqid, account.clone());
+    self.writer.send(Message::Text(request.to_string())).await?;
+    Ok(())
+  }
+
+  pub async fn recv(&mut self) -> Result<Option<AccountUpdate>> {
     while let Some(msg) = self.reader.next().await {
       let message = match msg {
         Ok(msg) => self.decode_message(msg),
@@ -104,6 +134,7 @@ impl SolanaChangeListener {
           Err(Error::WebSocketError(e))
         }
       }?;
+
       // This message is a JSON-RPC response to a subscription request.
       // Here we are mapping the request id with the subscription id,
       // and creating a map of subscription id => pubkey.
@@ -124,7 +155,7 @@ impl SolanaChangeListener {
       if let SolanaMessage::Notification { method, params, .. } = message {
         match &method[..] {
           "accountNotification" => {
-            return Ok(Some(self.notification_to_change(params)?));
+            return Ok(Some(self.account_to_change(params)?));
           }
           _ => {
             // todo program updates
@@ -137,18 +168,18 @@ impl SolanaChangeListener {
     Ok(None)
   }
 
-  fn notification_to_change(
+  fn account_to_change(
     &self,
     params: NotificationParams,
-  ) -> Result<SolanaChange> {
+  ) -> Result<AccountUpdate> {
     if let Some(pubkey) = self.subscriptions.get(&params.subscription) {
-      match params.result.value {
-        NotificationValue::Account(acc) => {
-          Ok(SolanaChange::Account((*pubkey, acc.try_into()?)))
-        }
-        NotificationValue::Program(_) => {
-          Ok(SolanaChange::ProgramChange(ProgramChange))
-        }
+      if let NotificationValue::Account(acc) = params.result.value {
+        Ok(AccountUpdate {
+          pubkey: *pubkey,
+          account: acc.try_into()?,
+        })
+      } else {
+        Err(Error::UnsupportedRpcFormat)
       }
     } else {
       warn!("Unknown subscription: {}", &params.subscription);
@@ -161,18 +192,5 @@ impl SolanaChangeListener {
       Message::Text(text) => Ok(serde_json::from_str(&text)?),
       _ => Err(Error::UnsupportedRpcFormat),
     }
-  }
-
-  fn account_subscription_request(account: &Pubkey, id: u64) -> String {
-    json!({
-      "jsonrpc": "2.0",
-      "id": id,
-      "method": "accountSubscribe",
-      "params": [account.to_string(), {
-        "encoding": "jsonParsed",
-        "commitment": "finalized"
-      }]
-    })
-    .to_string()
   }
 }

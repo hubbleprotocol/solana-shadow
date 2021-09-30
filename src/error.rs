@@ -12,6 +12,9 @@ pub enum Error {
   #[error("Invalid Argument")]
   InvalidArguemt,
 
+  #[error("Background worker is dead")]
+  WorkerDead,
+
   #[error("Solana RPC error")]
   SolanaClientError(#[from] ClientError),
 
@@ -23,6 +26,9 @@ pub enum Error {
 
   #[error("Unsupported RPC message format")]
   UnsupportedRpcFormat,
+
+  #[error("Internal error")]
+  InternalError,
 
   #[error("Invalid JSON-RPC message")]
   InvalidRpcMessage(#[from] serde_json::Error),
