@@ -154,11 +154,10 @@ impl SolanaChangeListener {
       // account or a program has changed.
       if let SolanaMessage::Notification { method, params, .. } = message {
         match &method[..] {
-          "accountNotification" => {
-            return Ok(Some(self.account_to_change(params)?));
+          "accountNotification" | "programNotification" => {
+            return Ok(Some(self.account_notification_to_change(params)?));
           }
           _ => {
-            // todo program updates
             warn!("unrecognized notification type: {}", &method);
           }
         }
@@ -168,22 +167,26 @@ impl SolanaChangeListener {
     Ok(None)
   }
 
-  fn account_to_change(
+  fn account_notification_to_change(
     &self,
     params: NotificationParams,
   ) -> Result<AccountUpdate> {
-    if let Some(pubkey) = self.subscriptions.get(&params.subscription) {
-      if let NotificationValue::Account(acc) = params.result.value {
-        Ok(AccountUpdate {
-          pubkey: *pubkey,
-          account: acc.try_into()?,
-        })
-      } else {
-        Err(Error::UnsupportedRpcFormat)
+    match params.result.value {
+      NotificationValue::Account(acc) => {
+        if let Some(pubkey) = self.subscriptions.get(&params.subscription) {
+          Ok(AccountUpdate {
+            pubkey: *pubkey,
+            account: acc.try_into()?,
+          })
+        } else {
+          warn!("Unknown subscription: {}", &params.subscription);
+          Err(Error::UnknownSubscription)
+        }
       }
-    } else {
-      warn!("Unknown subscription: {}", &params.subscription);
-      Err(Error::UnknownSubscription)
+      NotificationValue::Program(progacc) => Ok(AccountUpdate {
+        pubkey: progacc.pubkey.parse()?,
+        account: progacc.account.try_into()?,
+      }),
     }
   }
 

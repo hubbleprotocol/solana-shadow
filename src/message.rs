@@ -20,7 +20,13 @@ pub(crate) struct NotificationContext {
 #[serde(untagged)]
 pub(crate) enum NotificationValue {
   Account(AccountRepresentation),
-  Program(u64),
+  Program(WrappedAccountRepresentation),
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WrappedAccountRepresentation {
+  pub pubkey: String,
+  pub account: AccountRepresentation
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,7 +42,7 @@ pub(crate) struct AccountRepresentation {
 #[derive(Debug, Deserialize)]
 pub(crate) struct NotificationResult {
   pub context: NotificationContext,
-  pub value: NotificationValue, // HashMap<String, Value>, //NotificationValue,
+  pub value: NotificationValue,
 }
 
 #[derive(Debug, Deserialize)]

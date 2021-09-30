@@ -1,5 +1,6 @@
 use anyhow::Result;
 use solana_shadow::{BlockchainShadow, Network};
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -9,14 +10,21 @@ async fn main() -> Result<()> {
     .with_env_filter(EnvFilter::try_from_default_env()?)
     .init();
 
+  println!("this example will dump the values of all accounts owned by pyth program every 5 seconds");
+  println!();
+
   // this is the prog id that owns all pyth oracles on mainnet
   let prog = "FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH".parse()?;
   let network = Network::Mainnet;
   let local = BlockchainShadow::new_for_program(&prog, network).await?;
 
-  local.for_each_account(|pubkey, account| {
-    println!(" - [{}]: {:?}", pubkey, account);
-  });
+  for _ in 0.. {
+    local.for_each_account(|pubkey, account| {
+      println!(" - [{}]: {:?}", pubkey, account);
+    });
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+  }
 
   local.worker().await?;
 
