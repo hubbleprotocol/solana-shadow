@@ -26,7 +26,7 @@ pub(crate) enum NotificationValue {
 #[derive(Debug, Deserialize)]
 pub(crate) struct WrappedAccountRepresentation {
   pub pubkey: String,
-  pub account: AccountRepresentation
+  pub account: AccountRepresentation,
 }
 
 #[derive(Debug, Deserialize)]

@@ -34,10 +34,10 @@ async fn main() -> Result<()> {
   // will reflect the latest version on-chain.
   for i in 0.. {
     // access the most recent snapshot of an account
-    let ethacc = &shadow.get_account(&ethusd).unwrap();
+    let ethacc = shadow.get_account(&ethusd).unwrap();
     let ethprice = cast::<Price>(&ethacc.data).agg.price;
 
-    let btcacc = &shadow.get_account(&btcusd).unwrap();
+    let btcacc = shadow.get_account(&btcusd).unwrap();
     let btcprice = cast::<Price>(&btcacc.data).agg.price;
 
     println!("ETH/USD: {}", ethprice);
@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     }
 
     if i > 5 {
-      let solacc = &shadow.get_account(&solusd).unwrap();
+      let solacc = shadow.get_account(&solusd).unwrap();
       let solprice = cast::<Price>(&solacc.data).agg.price;
       println!("SOL/USD: {}", solprice);
     }
