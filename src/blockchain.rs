@@ -2,18 +2,28 @@ use crate::{
   sync::{AccountUpdate, SolanaChangeListener, SubRequest},
   Error, Network, Result,
 };
-use crossfire::mpmc::{bounded_future_both, RxFuture, SharedFutureBoth};
 use dashmap::DashMap;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
 use std::sync::Arc;
 use tokio::{
-  sync::mpsc::{unbounded_channel, UnboundedSender},
+  sync::{
+    broadcast::{self, Receiver, Sender},
+    mpsc::{unbounded_channel, UnboundedSender},
+  },
   task::JoinHandle,
 };
 use tracing::debug;
 
 type AccountsMap = DashMap<Pubkey, Account>;
+
+/// This parameter control how many updates are going to be stored in memory
+/// for update receivers (if any subscribed) before it starts returning dropping
+/// them and returning RecvError::Lagging.
+/// For more info see: https://docs.rs/tokio/1.12.0/tokio/sync/broadcast/index.html#lagging
+/// for now it is set to 64, which gives us about 30 seconds on Solana
+/// as there can be an update at most once every 400 miliseconds (blocktime)
+const MAX_UPDATES_SUBSCRIBER_LAG: usize = 64;
 
 /// The entry point to the Solana Blockchain Shadow API
 ///
@@ -28,7 +38,7 @@ pub struct BlockchainShadow {
   accounts: Arc<AccountsMap>,
   sub_req: Option<UnboundedSender<SubRequest>>,
   sync_worker: Option<JoinHandle<Result<()>>>,
-  updates_recv: Option<RxFuture<(Pubkey, Account), SharedFutureBoth>>,
+  ext_updates: Sender<(Pubkey, Account)>,
 }
 
 // public methods
@@ -39,7 +49,7 @@ impl BlockchainShadow {
       accounts: Arc::new(AccountsMap::new()),
       sync_worker: None,
       sub_req: None,
-      updates_recv: None,
+      ext_updates: broadcast::channel(MAX_UPDATES_SUBSCRIBER_LAG).0,
     };
     instance.create_worker().await?;
     Ok(instance)
@@ -138,12 +148,17 @@ impl BlockchainShadow {
     }
   }
 
-  pub fn updates_channel(&self) -> Result<RxFuture<(Pubkey, Account), SharedFutureBoth>> {
-    if let Some(receiver) = &self.updates_recv {
-      Ok(receiver.clone())
-    } else {
-      Err(Error::WorkerDead)
-    }
+  pub fn updates_channel(&self) -> Receiver<(Pubkey, Account)> {
+    debug!(
+      "-> sub -> receiver count: {}",
+      self.ext_updates.receiver_count()
+    );
+    let sub = self.ext_updates.subscribe();
+    debug!(
+      "-> sub -> receiver count: {}",
+      self.ext_updates.receiver_count()
+    );
+    sub
   }
 }
 
@@ -151,14 +166,12 @@ impl BlockchainShadow {
   async fn create_worker(&mut self) -> Result<()> {
     // subscription requests from blockchain shadow -> listener
     let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
-    let (updates_tx, updates_rx) = bounded_future_both::<(Pubkey, Account)>(1);
 
     self.sub_req = Some(subscribe_tx);
-    self.updates_recv = Some(updates_rx);
 
     let network = self.network.clone();
     let accs_ref = self.accounts.clone();
-
+    let updates_tx = self.ext_updates.clone();
     self.sync_worker = Some(tokio::spawn(async move {
       let mut listener = SolanaChangeListener::new(network).await?;
       loop {
@@ -166,7 +179,7 @@ impl BlockchainShadow {
           Ok(Some(AccountUpdate { pubkey, account })) = listener.recv() => {
             debug!("account {} updated", &pubkey);
             accs_ref.insert(pubkey, account.clone());
-            updates_tx.try_send((pubkey, account)).unwrap_or(());
+            updates_tx.send((pubkey, account)).unwrap();
           },
           Some(subreq) = subscribe_rx.recv() => {
             match subreq {

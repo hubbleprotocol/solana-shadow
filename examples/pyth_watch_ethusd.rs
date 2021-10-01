@@ -4,12 +4,18 @@ use solana_shadow::{BlockchainShadow, Network};
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn configure_logging() {
   tracing_subscriber::fmt::Subscriber::builder()
     .with_writer(std::io::stdout)
-    .with_env_filter(EnvFilter::try_from_default_env()?)
+    .with_env_filter(
+      EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info")),
+    )
     .init();
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+  configure_logging();
 
   // https://pyth.network/developers/accounts/
   let ethusd = "JBu1AL4obBcCMqKBBxhpWCNUt136ijcuMZLFvTP7iWdB".parse()?;

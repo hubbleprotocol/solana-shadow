@@ -3,12 +3,18 @@ use solana_shadow::{BlockchainShadow, Network};
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn configure_logging() {
   tracing_subscriber::fmt::Subscriber::builder()
     .with_writer(std::io::stdout)
-    .with_env_filter(EnvFilter::try_from_default_env()?)
+    .with_env_filter(
+      EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info")),
+    )
     .init();
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+  configure_logging();
 
   println!("this example will dump the values of all accounts owned by pyth program every 5 seconds");
   println!();

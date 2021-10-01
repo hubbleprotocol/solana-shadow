@@ -1,17 +1,23 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use pyth_client::{cast, Price};
 use solana_shadow::{BlockchainShadow, Network};
+use std::time::Duration;
+use tokio::sync::broadcast::error::RecvError;
 use tracing_subscriber::EnvFilter;
+
+fn configure_logging() {
+  tracing_subscriber::fmt::Subscriber::builder()
+    .with_writer(std::io::stdout)
+    .with_env_filter(
+      EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info")),
+    )
+    .init();
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-  tracing_subscriber::fmt::Subscriber::builder()
-    .with_writer(std::io::stdout)
-    .with_env_filter(EnvFilter::try_from_default_env()?)
-    .init();
-
+  configure_logging();
+  
   // https://pyth.network/developers/accounts/
   let ethusd = "JBu1AL4obBcCMqKBBxhpWCNUt136ijcuMZLFvTP7iWdB".parse()?;
   let btcusd = "GVXRSBjFk6e6J3NbVPXohDJetcTjaeeuykUpbQF8UoMU".parse()?;
@@ -33,18 +39,23 @@ async fn main() -> Result<()> {
   println!();
 
   // get a mpmc receiver end of an updates channel
-  let updates_channel = shadow.updates_channel()?;
+  let mut updates_channel = shadow.updates_channel();
 
   tokio::spawn(async move {
-
     // start printing updates only starting from the 5th second
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // now everytime an account changes, its pubkey will be
     // broadcasted to all receivers that are waiting on updates.
-    while let Ok((pubkey, account)) = updates_channel.recv().await {
-      let price = cast::<Price>(&account.data).agg.price;
-      println!("account updated: {}: {}", &pubkey, price);
+    loop {
+      match updates_channel.recv().await {
+        Ok((pubkey, account)) => {
+          let price = cast::<Price>(&account.data).agg.price;
+          println!("account updated: {}: {}", &pubkey, price);
+        }
+        Err(RecvError::Lagged(n)) => println!("updates channel lagging: {}", n),
+        Err(RecvError::Closed) => eprintln!("updates channel closed"),
+      }
     }
   });
 
