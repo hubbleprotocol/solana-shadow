@@ -2,6 +2,7 @@ use crate::{
   sync::{AccountUpdate, SolanaChangeListener, SubRequest},
   Error, Network, Result,
 };
+use crossfire::mpmc::{bounded_future_both, RxFuture, SharedFutureBoth};
 use dashmap::DashMap;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
@@ -27,6 +28,7 @@ pub struct BlockchainShadow {
   accounts: Arc<AccountsMap>,
   sub_req: Option<UnboundedSender<SubRequest>>,
   sync_worker: Option<JoinHandle<Result<()>>>,
+  updates_recv: Option<RxFuture<(Pubkey, Account), SharedFutureBoth>>,
 }
 
 // public methods
@@ -37,6 +39,7 @@ impl BlockchainShadow {
       accounts: Arc::new(AccountsMap::new()),
       sync_worker: None,
       sub_req: None,
+      updates_recv: None,
     };
     instance.create_worker().await?;
     Ok(instance)
@@ -134,14 +137,25 @@ impl BlockchainShadow {
       None => Err(Error::WorkerDead),
     }
   }
+
+  pub fn updates_channel(&self) -> Result<RxFuture<(Pubkey, Account), SharedFutureBoth>> {
+    if let Some(receiver) = &self.updates_recv {
+      Ok(receiver.clone())
+    } else {
+      Err(Error::WorkerDead)
+    }
+  }
 }
 
 impl BlockchainShadow {
   async fn create_worker(&mut self) -> Result<()> {
     // subscription requests from blockchain shadow -> listener
     let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
+    let (updates_tx, updates_rx) = bounded_future_both::<(Pubkey, Account)>(1);
 
     self.sub_req = Some(subscribe_tx);
+    self.updates_recv = Some(updates_rx);
+
     let network = self.network.clone();
     let accs_ref = self.accounts.clone();
 
@@ -151,7 +165,8 @@ impl BlockchainShadow {
         tokio::select! {
           Ok(Some(AccountUpdate { pubkey, account })) = listener.recv() => {
             debug!("account {} updated", &pubkey);
-            accs_ref.insert(pubkey, account);
+            accs_ref.insert(pubkey, account.clone());
+            updates_tx.try_send((pubkey, account)).unwrap_or(());
           },
           Some(subreq) = subscribe_rx.recv() => {
             match subreq {

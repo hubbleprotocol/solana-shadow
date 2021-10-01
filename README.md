@@ -30,6 +30,8 @@ loop {
 
   sleep(Duration::from_secs(3)).await;
 }
+
+local.worker().await?;
 ```
 
 # Mirroring few random accounts
@@ -53,5 +55,41 @@ loop {
 
     sleep(Duration::from_secs(3)).await;
   }
+
+  local.worker().await?;
+```
+
+
+# Listening on changes to accounts: 
+
+```rust
+
+  // https://pyth.network/developers/accounts/
+  let ethusd = "JBu1AL4obBcCMqKBBxhpWCNUt136ijcuMZLFvTP7iWdB".parse()?;
+  let btcusd = "GVXRSBjFk6e6J3NbVPXohDJetcTjaeeuykUpbQF8UoMU".parse()?;
+  let solusd = "H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG".parse()?;
+
+  // create an offline shadow of the on-chain data.
+  // whenever the data change on-chain those changes
+  // will be reflected immediately in this type.
+  let shadow = BlockchainShadow::new_for_accounts(
+    &vec![ethusd, btcusd, solusd],
+    Network::Mainnet,
+  )
+  .await?;
+
+  tokio::spawn(async move {
+    // start printing updates only after 5 seconds
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    // now everytime an account changes, its pubkey will be
+    // broadcasted to all receivers that are waiting on updates.
+    while let Ok((pubkey, account)) = updates_channel.recv().await {
+      let price = cast::<Price>(&account.data).agg.price;
+      println!("account updated: {}: {}", &pubkey, price);
+    }
+  });
+
+  shadow.worker().await?;
 
 ```
