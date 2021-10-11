@@ -179,7 +179,9 @@ impl BlockchainShadow {
           Ok(Some(AccountUpdate { pubkey, account })) = listener.recv() => {
             debug!("account {} updated", &pubkey);
             accs_ref.insert(pubkey, account.clone());
-            updates_tx.send((pubkey, account)).unwrap();
+            if updates_tx.receiver_count() != 0 {
+              updates_tx.send((pubkey, account)).unwrap();
+            }
           },
           Some(subreq) = subscribe_rx.recv() => {
             match subreq {
