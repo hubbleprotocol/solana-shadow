@@ -13,7 +13,7 @@ use tokio::{
   },
   task::JoinHandle,
 };
-use tracing::debug;
+use tracing::{debug, error};
 
 type AccountsMap = DashMap<Pubkey, Account>;
 
@@ -168,7 +168,6 @@ impl BlockchainShadow {
     let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
 
     self.sub_req = Some(subscribe_tx);
-
     let network = self.network.clone();
     let accs_ref = self.accounts.clone();
     let updates_tx = self.ext_updates.clone();
@@ -176,11 +175,19 @@ impl BlockchainShadow {
       let mut listener = SolanaChangeListener::new(network).await?;
       loop {
         tokio::select! {
-          Ok(Some(AccountUpdate { pubkey, account })) = listener.recv() => {
-            debug!("account {} updated", &pubkey);
-            accs_ref.insert(pubkey, account.clone());
-            if updates_tx.receiver_count() != 0 {
-              updates_tx.send((pubkey, account)).unwrap();
+          recv_result = listener.recv() => {
+            match recv_result {
+              Ok(Some(AccountUpdate { pubkey, account })) => {
+                debug!("account {} updated", &pubkey);
+                accs_ref.insert(pubkey, account.clone());
+                if updates_tx.receiver_count() != 0 {
+                  updates_tx.send((pubkey, account)).unwrap();
+                }
+              },
+              Ok(None) => {
+                error!("Websocket connection to solana dropped");
+              },
+              Err(e) => error!("error in the sync worker thread: {:?}", e)
             }
           },
           Some(subreq) = subscribe_rx.recv() => {
