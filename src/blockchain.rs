@@ -218,13 +218,15 @@ impl BlockchainShadow {
     let channel = self.sub_req.clone();
     if let Some(every) = self.options.reconnect_every {
       self.monitor_worker = Some(tokio::spawn(async move {
-        info!("reestablising connection to solana");
-        tokio::time::sleep(every).await;
-        channel
-          .unwrap()
-          .send(SubRequest::ReconnectAll)
-          .map_err(|_| Error::InternalError)?;
-        Ok(())
+        loop {
+          let channel_clone = channel.clone();
+          info!("reestablising connection to solana");
+          tokio::time::sleep(every).await;
+          channel_clone
+            .unwrap()
+            .send(SubRequest::ReconnectAll)
+            .map_err(|_| Error::InternalError)?;
+        }
       }));
     }
     Ok(())
