@@ -39,8 +39,8 @@ pub(crate) enum SubRequest {
 
 pub(crate) struct SolanaChangeListener {
   url: Url,
-  reader: WsReader,
-  writer: WsWriter,
+  reader: Option<WsReader>,
+  writer: Option<WsWriter>,
   reqid: AtomicU64,
   pending: DashMap<u64, Pubkey>,
   subscriptions: DashMap<u64, Pubkey>,
@@ -64,8 +64,8 @@ impl SolanaChangeListener {
     let (writer, reader) = ws_stream.split();
     Ok(Self {
       url,
-      reader,
-      writer,
+      reader: Some(reader),
+      writer: Some(writer),
       reqid: AtomicU64::new(1),
       pending: DashMap::new(),
       subscriptions: DashMap::new(),
@@ -114,7 +114,14 @@ impl SolanaChangeListener {
     // solana-generated subscription id to identify
     // an account.
     self.pending.insert(reqid, account.clone());
-    self.writer.send(Message::Text(request.to_string())).await?;
+    loop {
+      if let Some(ref mut writer) = self.writer {
+        writer.send(Message::Text(request.to_string())).await?;
+        break;
+      } else {
+        tokio::task::yield_now().await;
+      }
+    }
     Ok(())
   }
 
@@ -159,62 +166,86 @@ impl SolanaChangeListener {
     // solana-generated subscription id to identify
     // an account.
     self.pending.insert(reqid, account.clone());
-    self.writer.send(Message::Text(request.to_string())).await?;
+    loop {
+      if let Some(ref mut writer) = self.writer {
+        writer.send(Message::Text(request.to_string())).await?;
+        break;
+      } else {
+        tokio::task::yield_now().await;
+      }
+    }
     Ok(())
   }
 
   pub async fn recv(&mut self) -> Result<Option<AccountUpdate>> {
-    while let Some(msg) = self.reader.next().await {
-      let message = match msg {
-        Ok(msg) => self.decode_message(msg),
-        Err(e) => {
-          warn!("received ws error from solana: {:?}", &e);
-          Err(Error::WebSocketError(e))
-        }
-      }?;
+    loop {
+      if let Some(ref mut reader) = self.reader {
+        while let Some(msg) = reader.next().await {
+          let message = match msg {
+            Ok(msg) => match msg {
+              Message::Text(text) => Ok(serde_json::from_str(&text)?),
+              _ => Err(Error::UnsupportedRpcFormat),
+            },
+            Err(e) => {
+              warn!("received ws error from solana: {:?}", &e);
+              Err(Error::WebSocketError(e))
+            }
+          }?;
 
-      // This message is a JSON-RPC response to a subscription request.
-      // Here we are mapping the request id with the subscription id,
-      // and creating a map of subscription id => pubkey.
-      // This type of message is not relevant to the external callers
-      // of this method, so we keep looping and listening for interesting
-      // notifications.
-      if let SolanaMessage::Confirmation { id, result, .. } = message {
-        if let Some(pubkey) = self.pending.get(&id) {
-          self.subscriptions.insert(result, *pubkey); // todo remove from pending
-          debug!("created subscripton {} for {}", &result, &*pubkey);
-        } else {
-          warn!("Unrecognized subscription id: ({}, {})", id, result);
-        }
-      }
+          // This message is a JSON-RPC response to a subscription request.
+          // Here we are mapping the request id with the subscription id,
+          // and creating a map of subscription id => pubkey.
+          // This type of message is not relevant to the external callers
+          // of this method, so we keep looping and listening for interesting
+          // notifications.
+          if let SolanaMessage::Confirmation { id, result, .. } = message {
+            if let Some(pubkey) = self.pending.get(&id) {
+              self.subscriptions.insert(result, *pubkey); // todo remove from pending
+              debug!("created subscripton {} for {}", &result, &*pubkey);
+            } else {
+              warn!("Unrecognized subscription id: ({}, {})", id, result);
+            }
+          }
 
-      // This is a notification call from Solana telling us to either an
-      // account or a program has changed.
-      if let SolanaMessage::Notification { method, params, .. } = message {
-        match &method[..] {
-          "accountNotification" | "programNotification" => {
-            return Ok(Some(self.account_notification_to_change(params)?));
-          }
-          _ => {
-            warn!("unrecognized notification type: {}", &method);
+          // This is a notification call from Solana telling us to either an
+          // account or a program has changed.
+          if let SolanaMessage::Notification { method, params, .. } = message {
+            match &method[..] {
+              "accountNotification" | "programNotification" => {
+                return Ok(Some(self.account_notification_to_change(params)?));
+              }
+              _ => {
+                warn!("unrecognized notification type: {}", &method);
+              }
+            }
           }
         }
+      } else {
+        tokio::task::yield_now().await;
       }
     }
 
+    #[allow(unreachable_code)]
     Ok(None)
   }
 
   pub async fn reconnect_all(&mut self) -> Result<()> {
-    self.writer.close().await?;
+    let old_reader = self.reader.take();
+    let old_writer = self.writer.take();
 
     let (ws_stream, _) = connect_async(self.url.clone()).await?;
     let (writer, reader) = ws_stream.split();
 
-    self.reader = reader;
-    self.writer = writer;
+    self.reader = Some(reader);
+    self.writer = Some(writer);
     self.pending = DashMap::new();
     self.subscriptions = DashMap::new();
+
+    let mut stream = old_writer
+      .unwrap()
+      .reunite(old_reader.unwrap())
+      .map_err(|_| Error::InternalError)?;
+    stream.close(None).await?;
 
     #[allow(unused_assignments)]
     let mut history = Vec::new();
@@ -260,13 +291,6 @@ impl SolanaChangeListener {
         pubkey: progacc.pubkey.parse()?,
         account: progacc.account.try_into()?,
       }),
-    }
-  }
-
-  fn decode_message(&self, msg: Message) -> Result<SolanaMessage> {
-    match msg {
-      Message::Text(text) => Ok(serde_json::from_str(&text)?),
-      _ => Err(Error::UnsupportedRpcFormat),
     }
   }
 }
