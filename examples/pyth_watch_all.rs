@@ -1,5 +1,5 @@
 use anyhow::Result;
-use solana_shadow::{BlockchainShadow, Network};
+use solana_shadow::{BlockchainShadow, Network, SyncOptions};
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
@@ -21,8 +21,14 @@ async fn main() -> Result<()> {
 
   // this is the prog id that owns all pyth oracles on mainnet
   let prog = "FsJ3A3u2vn5cTVofAjvy6y5kwABJAqYWpe4975bi2epH".parse()?;
-  let network = Network::Mainnet;
-  let local = BlockchainShadow::new_for_program(&prog, network).await?;
+  let local = BlockchainShadow::new_for_program(
+    &prog,
+    SyncOptions {
+      network: Network::Mainnet,
+      reconnect_every: None,
+    },
+  )
+  .await?;
 
   for _ in 0.. {
     local.for_each_account(|pubkey, account| {

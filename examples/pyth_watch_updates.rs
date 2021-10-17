@@ -1,6 +1,6 @@
 use anyhow::Result;
 use pyth_client::{cast, Price};
-use solana_shadow::{BlockchainShadow, Network};
+use solana_shadow::{BlockchainShadow, Network, SyncOptions};
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 use tracing_subscriber::EnvFilter;
@@ -17,7 +17,7 @@ fn configure_logging() {
 #[tokio::main]
 async fn main() -> Result<()> {
   configure_logging();
-  
+
   // https://pyth.network/developers/accounts/
   let ethusd = "JBu1AL4obBcCMqKBBxhpWCNUt136ijcuMZLFvTP7iWdB".parse()?;
   let btcusd = "GVXRSBjFk6e6J3NbVPXohDJetcTjaeeuykUpbQF8UoMU".parse()?;
@@ -28,7 +28,10 @@ async fn main() -> Result<()> {
   // will be reflected immediately in this type.
   let shadow = BlockchainShadow::new_for_accounts(
     &vec![ethusd, btcusd, solusd],
-    Network::Mainnet,
+    SyncOptions {
+      network: Network::Mainnet,
+      reconnect_every: None,
+    },
   )
   .await?;
 

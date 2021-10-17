@@ -5,7 +5,7 @@ use crate::{
 use dashmap::DashMap;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{account::Account, pubkey::Pubkey};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tokio::{
   sync::{
     broadcast::{self, Receiver, Sender},
@@ -13,7 +13,7 @@ use tokio::{
   },
   task::JoinHandle,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 type AccountsMap = DashMap<Pubkey, Account>;
 
@@ -25,6 +25,11 @@ type AccountsMap = DashMap<Pubkey, Account>;
 /// as there can be an update at most once every 400 miliseconds (blocktime)
 const MAX_UPDATES_SUBSCRIBER_LAG: usize = 64;
 
+pub struct SyncOptions {
+  pub network: Network,
+  pub reconnect_every: Option<Duration>,
+}
+
 /// The entry point to the Solana Blockchain Shadow API
 ///
 /// This type allows its users to monitor several individual
@@ -34,29 +39,34 @@ const MAX_UPDATES_SUBSCRIBER_LAG: usize = 64;
 /// and accessible as if they were stored in a local
 /// `hashmap<Pubkey, Account>`
 pub struct BlockchainShadow {
-  network: Network,
+  options: SyncOptions,
   accounts: Arc<AccountsMap>,
   sub_req: Option<UnboundedSender<SubRequest>>,
   sync_worker: Option<JoinHandle<Result<()>>>,
+  monitor_worker: Option<JoinHandle<Result<()>>>,
   ext_updates: Sender<(Pubkey, Account)>,
 }
 
 // public methods
 impl BlockchainShadow {
-  pub async fn new(network: Network) -> Result<Self> {
+  pub async fn new(options: SyncOptions) -> Result<Self> {
     let mut instance = Self {
-      network: network.clone(),
+      options,
       accounts: Arc::new(AccountsMap::new()),
       sync_worker: None,
+      monitor_worker: None,
       sub_req: None,
       ext_updates: broadcast::channel(MAX_UPDATES_SUBSCRIBER_LAG).0,
     };
+
     instance.create_worker().await?;
+    instance.create_monitor_worker().await?;
+
     Ok(instance)
   }
 
   pub async fn add_accounts(&mut self, accounts: &[Pubkey]) -> Result<()> {
-    let initial: Vec<_> = RpcClient::new(self.network.rpc_url())
+    let initial: Vec<_> = RpcClient::new(self.network().rpc_url())
       .get_multiple_accounts(accounts)?
       .into_iter()
       .zip(accounts.iter())
@@ -82,7 +92,7 @@ impl BlockchainShadow {
   }
 
   pub async fn add_program(&mut self, program_id: &Pubkey) -> Result<()> {
-    let initial: Vec<_> = RpcClient::new(self.network.rpc_url())
+    let initial: Vec<_> = RpcClient::new(self.network().rpc_url())
       .get_program_accounts(&program_id)?
       .into_iter()
       .collect();
@@ -101,24 +111,24 @@ impl BlockchainShadow {
 
   pub async fn new_for_accounts(
     accounts: &[Pubkey],
-    network: Network,
+    options: SyncOptions,
   ) -> Result<Self> {
-    let mut instance = BlockchainShadow::new(network).await?;
+    let mut instance = BlockchainShadow::new(options).await?;
     instance.add_accounts(accounts).await?;
     Ok(instance)
   }
 
   pub async fn new_for_program(
     program: &Pubkey,
-    network: Network,
+    options: SyncOptions,
   ) -> Result<Self> {
-    let mut instance = BlockchainShadow::new(network).await?;
+    let mut instance = BlockchainShadow::new(options).await?;
     instance.add_program(program).await?;
     Ok(instance)
   }
 
   pub const fn network(&self) -> &Network {
-    &self.network
+    &self.options.network
   }
 
   pub fn len(&self) -> usize {
@@ -168,7 +178,7 @@ impl BlockchainShadow {
     let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
 
     self.sub_req = Some(subscribe_tx);
-    let network = self.network.clone();
+    let network = self.network().clone();
     let accs_ref = self.accounts.clone();
     let updates_tx = self.ext_updates.clone();
     self.sync_worker = Some(tokio::spawn(async move {
@@ -193,13 +203,30 @@ impl BlockchainShadow {
           Some(subreq) = subscribe_rx.recv() => {
             match subreq {
               SubRequest::Account(pubkey) => listener.subscribe_account(pubkey).await?,
-              SubRequest::Program(pubkey) => listener.subscribe_program(pubkey).await?
+              SubRequest::Program(pubkey) => listener.subscribe_program(pubkey).await?,
+              SubRequest::ReconnectAll => listener.reconnect_all().await?
             }
           }
         };
       }
     }));
 
+    Ok(())
+  }
+
+  async fn create_monitor_worker(&mut self) -> Result<()> {
+    let channel = self.sub_req.clone();
+    if let Some(every) = self.options.reconnect_every {
+      self.monitor_worker = Some(tokio::spawn(async move {
+        info!("reestablising connection to solana");
+        tokio::time::sleep(every).await;
+        channel
+          .unwrap()
+          .send(SubRequest::ReconnectAll)
+          .map_err(|_| Error::InternalError)?;
+        Ok(())
+      }));
+    }
     Ok(())
   }
 }

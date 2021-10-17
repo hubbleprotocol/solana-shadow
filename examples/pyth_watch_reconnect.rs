@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     &vec![ethusd, btcusd],
     SyncOptions {
       network: Network::Mainnet,
-      reconnect_every: None,
+      reconnect_every: Some(Duration::from_secs(30)),
     },
   )
   .await?;

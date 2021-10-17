@@ -14,14 +14,15 @@ use std::{
   convert::TryInto,
   sync::atomic::{AtomicU64, Ordering},
 };
-use tokio::net::TcpStream;
+use tokio::{net::TcpStream, sync::RwLock};
 use tokio_tungstenite::{
   connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
-type WsWriter = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-type WsReader = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type WsReader = SplitStream<WsStream>;
+type WsWriter = SplitSink<WsStream, Message>;
 
 #[derive(Debug)]
 pub(crate) struct AccountUpdate {
@@ -29,18 +30,21 @@ pub(crate) struct AccountUpdate {
   pub account: Account,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum SubRequest {
   Account(Pubkey),
   Program(Pubkey),
+  ReconnectAll,
 }
 
 pub(crate) struct SolanaChangeListener {
+  url: Url,
   reader: WsReader,
   writer: WsWriter,
   reqid: AtomicU64,
   pending: DashMap<u64, Pubkey>,
   subscriptions: DashMap<u64, Pubkey>,
+  subs_history: RwLock<Vec<SubRequest>>,
 }
 
 impl SolanaChangeListener {
@@ -56,14 +60,16 @@ impl SolanaChangeListener {
       _ => panic!("unsupported cluster url scheme"),
     };
 
-    let (ws_stream, _) = connect_async(url).await?;
+    let (ws_stream, _) = connect_async(url.clone()).await?;
     let (writer, reader) = ws_stream.split();
     Ok(Self {
+      url,
       reader,
       writer,
       reqid: AtomicU64::new(1),
       pending: DashMap::new(),
       subscriptions: DashMap::new(),
+      subs_history: RwLock::new(Vec::new()),
     })
   }
 
@@ -73,6 +79,14 @@ impl SolanaChangeListener {
   /// has been successfully created, but only the the request was
   /// sent successfully.
   pub async fn subscribe_account(&mut self, account: Pubkey) -> Result<()> {
+    self.subscribe_account_internal(account, true).await
+  }
+
+  async fn subscribe_account_internal(
+    &mut self,
+    account: Pubkey,
+    record: bool,
+  ) -> Result<()> {
     let reqid = self.reqid.fetch_add(1, Ordering::SeqCst);
     let request = json!({
       "jsonrpc": "2.0",
@@ -83,6 +97,14 @@ impl SolanaChangeListener {
         "commitment": "finalized"
       }]
     });
+
+    if record {
+      // keep a copy of this request in the subscriptions
+      // history log, so that when a reconnect event occurs
+      // all those subscription messages are going to be replayed
+      let mut history = self.subs_history.write().await;
+      history.push(SubRequest::Account(account.clone()));
+    }
 
     // map jsonrpc request id to pubkey, later on when
     // the websocket responds with a subscription id,
@@ -102,6 +124,14 @@ impl SolanaChangeListener {
   /// has been successfully created, but only the the request was
   /// sent successfully.
   pub async fn subscribe_program(&mut self, account: Pubkey) -> Result<()> {
+    self.subscribe_program_internal(account, true).await
+  }
+
+  async fn subscribe_program_internal(
+    &mut self,
+    account: Pubkey,
+    record: bool,
+  ) -> Result<()> {
     let reqid = self.reqid.fetch_add(1, Ordering::SeqCst);
     let request = json!({
       "jsonrpc": "2.0",
@@ -112,6 +142,14 @@ impl SolanaChangeListener {
         "commitment": "finalized"
       }]
     });
+
+    if record {
+      // keep a copy of this request in the subscriptions
+      // history log, so that when a reconnect event occurs
+      // all those subscription messages are going to be replayed
+      let mut history = self.subs_history.write().await;
+      history.push(SubRequest::Program(account.clone()));
+    }
 
     // map jsonrpc request id to pubkey, later on when
     // the websocket responds with a subscription id,
@@ -165,6 +203,41 @@ impl SolanaChangeListener {
     }
 
     Ok(None)
+  }
+
+  pub async fn reconnect_all(&mut self) -> Result<()> {
+    self.writer.close().await?;
+
+    let (ws_stream, _) = connect_async(self.url.clone()).await?;
+    let (writer, reader) = ws_stream.split();
+
+    self.reader = reader;
+    self.writer = writer;
+    self.pending = DashMap::new();
+    self.subscriptions = DashMap::new();
+
+    #[allow(unused_assignments)]
+    let mut history = Vec::new();
+    {
+      let shared_history = self.subs_history.read().await;
+      history = shared_history.clone();
+    }
+
+    for sub in history.iter() {
+      match sub {
+        SubRequest::Account(acc) => {
+          info!("recreating account subscription for {}", &acc);
+          self.subscribe_account_internal(*acc, false).await?
+        }
+        SubRequest::Program(acc) => {
+          info!("recreating program subscription for {}", &acc);
+          self.subscribe_program_internal(*acc, false).await?
+        }
+        _ => panic!("invalid history value"),
+      }
+    }
+
+    Ok(())
   }
 
   fn account_notification_to_change(
