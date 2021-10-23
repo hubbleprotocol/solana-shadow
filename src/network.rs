@@ -20,6 +20,15 @@ impl Network {
     }
     .to_owned()
   }
+  pub(crate) fn wss_url(&self) -> String {
+    match self {
+      Network::Devnet
+      | Network::Testnet
+      | Network::Mainnet
+      | Network::Custom(_) => self.rpc_url(),
+      Network::Localhost => "http://127.0.0.1:8900".to_owned(),
+    }
+  }
 }
 
 impl Display for Network {
