@@ -50,7 +50,7 @@ pub(crate) struct SolanaChangeListener {
 impl SolanaChangeListener {
   pub async fn new(network: Network) -> Result<Self> {
     let mut url: Url = network
-      .rpc_url()
+      .wss_url()
       .parse()
       .map_err(|_| Error::InvalidArguemt)?;
 

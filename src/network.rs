@@ -20,6 +20,16 @@ impl Network {
     }
     .to_owned()
   }
+  pub(crate) fn wss_url(&self) -> String {
+    match self {
+      Network::Devnet => "https://api.devnet.solana.com",
+      Network::Testnet => "https://api.testnet.solana.com",
+      Network::Mainnet => "https://api.mainnet-beta.solana.com",
+      Network::Localhost => "http://127.0.0.1:8900",
+      Network::Custom(url) => url,
+    }
+    .to_owned()
+  }
 }
 
 impl Display for Network {
