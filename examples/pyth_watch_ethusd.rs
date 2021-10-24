@@ -1,6 +1,6 @@
 use anyhow::Result;
 use pyth_client::{cast, Price};
-use solana_shadow::{BlockchainShadow, Network, SyncOptions};
+use solana_shadow::{BlockchainShadow, SyncOptions};
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
@@ -29,10 +29,7 @@ async fn main() -> Result<()> {
   // account after 15 seconds.
   let mut shadow = BlockchainShadow::new_for_accounts(
     &vec![ethusd, btcusd],
-    SyncOptions {
-      network: Network::Mainnet,
-      reconnect_every: None,
-    },
+    SyncOptions::default(),
   )
   .await?;
 

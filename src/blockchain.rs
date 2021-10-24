@@ -27,7 +27,18 @@ const MAX_UPDATES_SUBSCRIBER_LAG: usize = 64;
 
 pub struct SyncOptions {
   pub network: Network,
+  pub max_lag: Option<usize>,
   pub reconnect_every: Option<Duration>,
+}
+
+impl Default for SyncOptions {
+  fn default() -> Self {
+    Self {
+      network: Network::Mainnet,
+      max_lag: None,
+      reconnect_every: None,
+    }
+  }
 }
 
 /// The entry point to the Solana Blockchain Shadow API
@@ -50,13 +61,14 @@ pub struct BlockchainShadow {
 // public methods
 impl BlockchainShadow {
   pub async fn new(options: SyncOptions) -> Result<Self> {
+    let max_lag = options.max_lag.unwrap_or(MAX_UPDATES_SUBSCRIBER_LAG);
     let mut instance = Self {
       options,
       accounts: Arc::new(AccountsMap::new()),
       sync_worker: None,
       monitor_worker: None,
       sub_req: None,
-      ext_updates: broadcast::channel(MAX_UPDATES_SUBSCRIBER_LAG).0,
+      ext_updates: broadcast::channel(max_lag).0,
     };
 
     instance.create_worker().await?;

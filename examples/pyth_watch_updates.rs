@@ -1,6 +1,6 @@
 use anyhow::Result;
 use pyth_client::{cast, Price};
-use solana_shadow::{BlockchainShadow, Network, SyncOptions};
+use solana_shadow::{BlockchainShadow, SyncOptions};
 use std::time::Duration;
 use tokio::sync::broadcast::error::RecvError;
 use tracing_subscriber::EnvFilter;
@@ -28,10 +28,7 @@ async fn main() -> Result<()> {
   // will be reflected immediately in this type.
   let shadow = BlockchainShadow::new_for_accounts(
     &vec![ethusd, btcusd, solusd],
-    SyncOptions {
-      network: Network::Mainnet,
-      reconnect_every: None,
-    },
+    SyncOptions::default(),
   )
   .await?;
 

@@ -5,6 +5,7 @@ use solana_sdk::{account::Account, pubkey::Pubkey};
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AccountChangeInfo {
+  #[allow(dead_code)]
   pub value: NotificationValue,
 }
 
@@ -13,6 +14,7 @@ pub(crate) struct ProgramChangeInfo {}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NotificationContext {
+  #[allow(dead_code)]
   pub slot: u64,
 }
 
@@ -41,6 +43,7 @@ pub(crate) struct AccountRepresentation {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct NotificationResult {
+  #[allow(dead_code)]
   pub context: NotificationContext,
   pub value: NotificationValue,
 }
@@ -55,11 +58,13 @@ pub(crate) struct NotificationParams {
 #[serde(untagged)]
 pub(crate) enum SolanaMessage {
   Confirmation {
+    #[allow(dead_code)]
     jsonrpc: String,
     result: u64,
     id: u64,
   },
   Notification {
+    #[allow(dead_code)]
     jsonrpc: String,
     method: String,
     params: NotificationParams,
