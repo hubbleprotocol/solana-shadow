@@ -103,7 +103,7 @@ impl SolanaChangeListener {
       // history log, so that when a reconnect event occurs
       // all those subscription messages are going to be replayed
       let mut history = self.subs_history.write().await;
-      history.push(SubRequest::Account(account.clone()));
+      history.push(SubRequest::Account(account));
     }
 
     // map jsonrpc request id to pubkey, later on when
@@ -113,7 +113,7 @@ impl SolanaChangeListener {
     // the account public key, instead they use the
     // solana-generated subscription id to identify
     // an account.
-    self.pending.insert(reqid, account.clone());
+    self.pending.insert(reqid, account);
     loop {
       if let Some(ref mut writer) = self.writer {
         writer.send(Message::Text(request.to_string())).await?;
@@ -155,7 +155,7 @@ impl SolanaChangeListener {
       // history log, so that when a reconnect event occurs
       // all those subscription messages are going to be replayed
       let mut history = self.subs_history.write().await;
-      history.push(SubRequest::Program(account.clone()));
+      history.push(SubRequest::Program(account));
     }
 
     // map jsonrpc request id to pubkey, later on when
@@ -165,7 +165,7 @@ impl SolanaChangeListener {
     // the account public key, instead they use the
     // solana-generated subscription id to identify
     // an account.
-    self.pending.insert(reqid, account.clone());
+    self.pending.insert(reqid, account);
     loop {
       if let Some(ref mut writer) = self.writer {
         writer.send(Message::Text(request.to_string())).await?;

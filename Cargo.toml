@@ -1,6 +1,6 @@
 [package]
 name = "solana-shadow"
-version = "0.1.2"
+version = "0.1.3"
 license = "Apache-2.0"
 authors = ["Karim Agha <karim.dev@gmail.com>"]
 description = "Synchronized shadow state of Solana programs available for off-chain processing."
@@ -16,19 +16,19 @@ borsh = "0.9"
 dashmap = "4.0.2"
 thiserror = "1"
 futures = "0.3"
-tracing = "0.1.28"
+tracing = "0.1.29"
 base64 = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 borsh-derive = "0.9"
 hyper-tls = "0.5.0"
-solana-sdk = "1.7.11"
-solana-client = "1.7.11"
-tokio = { version = "1.12", features = ["full"] }
+solana-sdk = "1.8.3"
+solana-client = "1.8.3"
+tokio = { version = "1.13", features = ["full"] }
 tokio-tungstenite = { version = "0.15", features = ["native-tls"] }
 
 [dev-dependencies]
 anyhow = "1"
 rand = "0.8"
 pyth-client = "0.2.2"
-tracing-subscriber = "0.2"
+tracing-subscriber = { version = "0.3.1", features = ["env-filter"] }

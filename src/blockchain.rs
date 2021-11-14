@@ -105,7 +105,7 @@ impl BlockchainShadow {
 
   pub async fn add_program(&mut self, program_id: &Pubkey) -> Result<()> {
     let initial: Vec<_> = RpcClient::new(self.network().rpc_url())
-      .get_program_accounts(&program_id)?
+      .get_program_accounts(program_id)?
       .into_iter()
       .collect();
 
@@ -147,20 +147,20 @@ impl BlockchainShadow {
     self.accounts.len()
   }
 
+  pub fn is_empty(&self) -> bool {
+    self.len() == 0
+  }
+
   pub fn for_each_account(&self, op: impl Fn(&Pubkey, &Account)) {
     for pair in self.accounts.iter() {
       let pubkey = pair.pair().0;
       let account = pair.pair().1;
-      op(pubkey, &account);
+      op(pubkey, account);
     }
   }
 
   pub fn get_account(&self, key: &Pubkey) -> Option<Account> {
-    match self.accounts.get(key) {
-      // this is rw-locked
-      None => None,
-      Some(acc) => Some(acc.clone()),
-    }
+    self.accounts.get(key).map(|acc| acc.clone())
   }
 
   pub async fn worker(mut self) -> Result<()> {

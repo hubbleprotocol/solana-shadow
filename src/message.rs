@@ -83,7 +83,7 @@ impl TryFrom<AccountRepresentation> for Account {
     };
     Ok(Account {
       lamports: repr.lamports,
-      data: data,
+      data,
       owner: Pubkey::from_str(&repr.owner)?,
       executable: repr.executable,
       rent_epoch: repr.rent_epoch,
