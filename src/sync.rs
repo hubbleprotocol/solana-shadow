@@ -16,7 +16,9 @@ use std::{
 };
 use tokio::{net::TcpStream, sync::RwLock};
 use tokio_tungstenite::{
-  connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
+  connect_async,
+  tungstenite::{self, Message},
+  MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, info, warn};
 
@@ -245,7 +247,15 @@ impl SolanaChangeListener {
       .unwrap()
       .reunite(old_reader.unwrap())
       .map_err(|_| Error::InternalError)?;
-    stream.close(None).await?;
+    stream.close(None).await.unwrap_or_else(|e| {
+      if let tungstenite::Error::AlreadyClosed = e {
+        // this is expected.
+        debug!("Connection to solana closed");
+      } else {
+        // leave a trace in the log for easier debugging
+        warn!("failed closing connection to Solana: {:?}", e);
+      }
+    });
 
     #[allow(unused_assignments)]
     let mut history = Vec::new();
