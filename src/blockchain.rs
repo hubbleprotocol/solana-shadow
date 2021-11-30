@@ -171,16 +171,7 @@ impl BlockchainShadow {
   }
 
   pub fn updates_channel(&self) -> Receiver<(Pubkey, Account)> {
-    debug!(
-      "-> sub -> receiver count: {}",
-      self.ext_updates.receiver_count()
-    );
-    let sub = self.ext_updates.subscribe();
-    debug!(
-      "-> sub -> receiver count: {}",
-      self.ext_updates.receiver_count()
-    );
-    sub
+    self.ext_updates.subscribe()
   }
 }
 
@@ -209,7 +200,10 @@ impl BlockchainShadow {
               Ok(None) => {
                 error!("Websocket connection to solana dropped");
               },
-              Err(e) => error!("error in the sync worker thread: {:?}", e)
+              Err(e) => {
+                error!("error in the sync worker thread: {:?}", e);
+                listener.reconnect_all().await?;
+              }
             }
           },
           Some(subreq) = subscribe_rx.recv() => {
