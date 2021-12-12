@@ -151,15 +151,7 @@ impl BlockchainShadow {
     self.len() == 0
   }
 
-  pub fn for_each_account(&self, op: impl Fn(&Pubkey, &Account)) {
-    for pair in self.accounts.iter() {
-      let pubkey = pair.pair().0;
-      let account = pair.pair().1;
-      op(pubkey, account);
-    }
-  }
-
-  pub fn for_each_account_mut(&self, mut op: impl FnMut(&Pubkey, &Account)) {
+  pub fn for_each_account(&self, mut op: impl FnMut(&Pubkey, &Account)) {
     for pair in self.accounts.iter() {
       let pubkey = pair.pair().0;
       let account = pair.pair().1;
