@@ -159,6 +159,14 @@ impl BlockchainShadow {
     }
   }
 
+  pub fn for_each_account_mut(&self, mut op: impl FnMut(&Pubkey, &Account)) {
+    for pair in self.accounts.iter() {
+      let pubkey = pair.pair().0;
+      let account = pair.pair().1;
+      op(pubkey, account);
+    }
+  }
+
   pub fn get_account(&self, key: &Pubkey) -> Option<Account> {
     self.accounts.get(key).map(|acc| acc.clone())
   }
