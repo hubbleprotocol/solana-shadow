@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Install dependency
-        run: apt-get install libudev-dev
+        run: sudo apt-get install libudev-dev
       - name: Check
         run: cargo check
       - name: Build
