@@ -9,13 +9,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Check
-      run: cargo check 
-    - name: Build
-      run: cargo build 
-    - name: Examples
-      run: cargo build --examples
+      - uses: actions/checkout@v2
+      - name: Install dependency
+        run: apt-get install libudev-dev
+      - name: Check
+        run: cargo check
+      - name: Build
+        run: cargo build
+      - name: Examples
+        run: cargo build --examples
 
   test:
     name: Test Suite
