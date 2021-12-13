@@ -24,6 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - name: Install dependency
+        run: sudo apt-get install libudev-dev
+
       - name: Run cargo test
         run: cargo test --verbose
 
@@ -33,6 +36,9 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
+
+      - name: Install dependency
+        run: sudo apt-get install libudev-dev
 
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
