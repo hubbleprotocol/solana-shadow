@@ -1,6 +1,6 @@
 use crate::{
   message::{NotificationParams, NotificationValue, SolanaMessage},
-  Error, Network, Result,
+  Error, Result, SyncOptions,
 };
 use dashmap::DashMap;
 use futures::{
@@ -47,11 +47,13 @@ pub(crate) struct SolanaChangeListener {
   pending: DashMap<u64, Pubkey>,
   subscriptions: DashMap<u64, Pubkey>,
   subs_history: RwLock<Vec<SubRequest>>,
+  sync_options: SyncOptions,
 }
 
 impl SolanaChangeListener {
-  pub async fn new(network: Network) -> Result<Self> {
-    let mut url: Url = network
+  pub async fn new(sync_options: SyncOptions) -> Result<Self> {
+    let mut url: Url = sync_options
+      .network
       .wss_url()
       .parse()
       .map_err(|_| Error::InvalidArguemt)?;
@@ -72,6 +74,7 @@ impl SolanaChangeListener {
       pending: DashMap::new(),
       subscriptions: DashMap::new(),
       subs_history: RwLock::new(Vec::new()),
+      sync_options,
     })
   }
 
@@ -96,7 +99,7 @@ impl SolanaChangeListener {
       "method": "accountSubscribe",
       "params": [account.to_string(), {
         "encoding": "jsonParsed",
-        "commitment": "finalized"
+        "commitment": self.sync_options.commitment.to_string(),
       }]
     });
 
@@ -148,7 +151,7 @@ impl SolanaChangeListener {
       "method": "programSubscribe",
       "params": [account.to_string(), {
         "encoding": "jsonParsed",
-        "commitment": "finalized"
+        "commitment": self.sync_options.commitment.to_string()
       }]
     });
 
