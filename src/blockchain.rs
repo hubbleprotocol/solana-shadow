@@ -42,7 +42,7 @@ impl Default for SyncOptions {
       network: Network::Mainnet,
       max_lag: None,
       reconnect_every: None,
-      commitment: CommitmentLevel::Processed,
+      commitment: CommitmentLevel::Finalized,
     }
   }
 }
