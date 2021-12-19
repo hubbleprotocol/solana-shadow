@@ -1,3 +1,12 @@
+# 0.1.7
+
+- Changing commitment config default to "finalized"
+- Updated dependencies
+
+# 0.1.6
+
+- Commitment Config Option
+
 # 0.1.5
 
 - `for_each_account` accepts `FnMut` to allow capturing mut variables
