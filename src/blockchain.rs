@@ -4,7 +4,10 @@ use crate::{
 };
 use dashmap::DashMap;
 use solana_client::rpc_client::RpcClient;
-use solana_sdk::{account::Account, pubkey::Pubkey};
+use solana_sdk::{
+  account::Account, commitment_config::CommitmentLevel, pubkey::Pubkey,
+};
+
 use std::{sync::Arc, time::Duration};
 use tokio::{
   sync::{
@@ -25,10 +28,12 @@ type AccountsMap = DashMap<Pubkey, Account>;
 /// as there can be an update at most once every 400 miliseconds (blocktime)
 const MAX_UPDATES_SUBSCRIBER_LAG: usize = 64;
 
+#[derive(Clone)]
 pub struct SyncOptions {
   pub network: Network,
   pub max_lag: Option<usize>,
   pub reconnect_every: Option<Duration>,
+  pub commitment: CommitmentLevel,
 }
 
 impl Default for SyncOptions {
@@ -37,6 +42,7 @@ impl Default for SyncOptions {
       network: Network::Mainnet,
       max_lag: None,
       reconnect_every: None,
+      commitment: CommitmentLevel::Processed,
     }
   }
 }
@@ -181,11 +187,11 @@ impl BlockchainShadow {
     let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
 
     self.sub_req = Some(subscribe_tx);
-    let network = self.network().clone();
     let accs_ref = self.accounts.clone();
     let updates_tx = self.ext_updates.clone();
+    let options = self.options.clone();
     self.sync_worker = Some(tokio::spawn(async move {
-      let mut listener = SolanaChangeListener::new(network).await?;
+      let mut listener = SolanaChangeListener::new(options).await?;
       loop {
         tokio::select! {
           recv_result = listener.recv() => {
