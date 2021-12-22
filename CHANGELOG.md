@@ -1,3 +1,7 @@
+# 0.1.8
+
+- Setting commitment level on RpcClient calls.
+
 # 0.1.7
 
 - Changing commitment config default to "finalized"
