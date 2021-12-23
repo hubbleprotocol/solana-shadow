@@ -1,3 +1,4 @@
+pub use anyhow::Result;
 use solana_client::client_error::ClientError;
 use solana_sdk::pubkey::ParsePubkeyError;
 use thiserror::Error;
@@ -43,4 +44,4 @@ pub enum Error {
   InternalSynchronizationError(#[from] JoinError),
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+// pub type Result<T> = std::result::Result<T, Error>;

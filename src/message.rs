@@ -72,7 +72,7 @@ pub(crate) enum SolanaMessage {
 }
 
 impl TryFrom<AccountRepresentation> for Account {
-  type Error = crate::Error;
+  type Error = anyhow::Error;
   fn try_from(repr: AccountRepresentation) -> crate::Result<Self> {
     let data = match &repr.data[..] {
       [content, format] => match &format[..] {

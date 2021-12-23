@@ -1,4 +1,5 @@
 use crate::{
+  rpc,
   sync::{AccountUpdate, SolanaChangeListener, SubRequest},
   Error, Network, Result,
 };
@@ -86,18 +87,12 @@ impl BlockchainShadow {
   }
 
   pub async fn add_accounts(&mut self, accounts: &[Pubkey]) -> Result<()> {
-    let initial: Vec<_> = RpcClient::new_with_commitment(
+    let client = rpc::ClientBuilder::new(
       self.network().rpc_url(),
-      CommitmentConfig {
-        commitment: self.options.commitment,
-      },
-    )
-    .get_multiple_accounts(accounts)?
-    .into_iter()
-    .zip(accounts.iter())
-    .filter(|(o, _)| o.is_some())
-    .map(|(acc, key)| (*key, acc.unwrap()))
-    .collect();
+      self.options.commitment,
+    );
+
+    let initial = rpc::get_multiple_accounts(client, accounts).await?;
 
     for (key, acc) in initial {
       self.accounts.insert(key, acc);
@@ -184,7 +179,7 @@ impl BlockchainShadow {
   pub async fn worker(mut self) -> Result<()> {
     match self.sync_worker.take() {
       Some(handle) => Ok(handle.await??),
-      None => Err(Error::WorkerDead),
+      None => Err(Error::WorkerDead)?,
     }
   }
 

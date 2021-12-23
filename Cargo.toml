@@ -26,9 +26,9 @@ solana-sdk = "1.8.3"
 solana-client = "1.8.3"
 tokio = { version = "1.13", features = ["full"] }
 tokio-tungstenite = { version = "0.16.1", features = ["native-tls"] }
+anyhow = "1.0.51"
 
 [dev-dependencies]
-anyhow = "1"
 rand = "0.8"
 pyth-client = "0.2.2"
 tracing-subscriber = { version = "0.3.1", features = ["env-filter"] }

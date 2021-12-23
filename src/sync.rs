@@ -297,7 +297,7 @@ impl SolanaChangeListener {
           })
         } else {
           warn!("Unknown subscription: {}", &params.subscription);
-          Err(Error::UnknownSubscription)
+          Err(Error::UnknownSubscription)?
         }
       }
       NotificationValue::Program(progacc) => Ok(AccountUpdate {

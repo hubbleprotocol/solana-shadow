@@ -2,6 +2,7 @@ mod blockchain;
 mod error;
 mod message;
 mod network;
+mod rpc;
 mod sync;
 
 pub use blockchain::{BlockchainShadow, SyncOptions};
