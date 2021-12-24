@@ -44,8 +44,8 @@ pub(crate) struct SolanaChangeListener {
   reader: Option<WsReader>,
   writer: Option<WsWriter>,
   reqid: AtomicU64,
-  pending: DashMap<u64, Pubkey>,
-  subscriptions: DashMap<u64, Pubkey>,
+  pending: DashMap<u64, SubRequest>,
+  subscriptions: DashMap<u64, SubRequest>,
   subs_history: RwLock<Vec<SubRequest>>,
   sync_options: SyncOptions,
 }
@@ -103,12 +103,14 @@ impl SolanaChangeListener {
       }]
     });
 
+    let sub_request = SubRequest::Account(account);
+
     if record {
       // keep a copy of this request in the subscriptions
       // history log, so that when a reconnect event occurs
       // all those subscription messages are going to be replayed
       let mut history = self.subs_history.write().await;
-      history.push(SubRequest::Account(account));
+      history.push(sub_request.clone());
     }
 
     // map jsonrpc request id to pubkey, later on when
@@ -118,7 +120,7 @@ impl SolanaChangeListener {
     // the account public key, instead they use the
     // solana-generated subscription id to identify
     // an account.
-    self.pending.insert(reqid, account);
+    self.pending.insert(reqid, sub_request);
     loop {
       if let Some(ref mut writer) = self.writer {
         writer.send(Message::Text(request.to_string())).await?;
@@ -155,12 +157,14 @@ impl SolanaChangeListener {
       }]
     });
 
+    let sub_request = SubRequest::Program(account);
+
     if record {
       // keep a copy of this request in the subscriptions
       // history log, so that when a reconnect event occurs
       // all those subscription messages are going to be replayed
       let mut history = self.subs_history.write().await;
-      history.push(SubRequest::Program(account));
+      history.push(sub_request.clone());
     }
 
     // map jsonrpc request id to pubkey, later on when
@@ -170,7 +174,7 @@ impl SolanaChangeListener {
     // the account public key, instead they use the
     // solana-generated subscription id to identify
     // an account.
-    self.pending.insert(reqid, account);
+    self.pending.insert(reqid, sub_request);
     loop {
       if let Some(ref mut writer) = self.writer {
         writer.send(Message::Text(request.to_string())).await?;
@@ -204,9 +208,15 @@ impl SolanaChangeListener {
           // of this method, so we keep looping and listening for interesting
           // notifications.
           if let SolanaMessage::Confirmation { id, result, .. } = message {
-            if let Some(pubkey) = self.pending.get(&id) {
-              self.subscriptions.insert(result, *pubkey); // todo remove from pending
-              debug!("created subscripton {} for {}", &result, &*pubkey);
+            if let Some(sub_request) = self.pending.get(&id) {
+              match *sub_request {
+                SubRequest::Account(_) | SubRequest::Program(_) => {
+                  self.subscriptions.insert(result, *sub_request); // todo remove from pending
+                }
+                SubRequest::ReconnectAll => warn!("SubRequest::ReconnectAll"),
+              };
+
+              debug!("created subscripton {} for {:?}", &result, &*sub_request);
             } else {
               warn!("Unrecognized subscription id: ({}, {})", id, result);
             }
@@ -290,7 +300,9 @@ impl SolanaChangeListener {
   ) -> Result<AccountUpdate> {
     match params.result.value {
       NotificationValue::Account(acc) => {
-        if let Some(pubkey) = self.subscriptions.get(&params.subscription) {
+        if let Some(SubRequest::Account(pubkey)) =
+          self.subscriptions.get(&params.subscription).as_deref()
+        {
           Ok(AccountUpdate {
             pubkey: *pubkey,
             account: acc.try_into()?,
