@@ -20,7 +20,7 @@ where
   let (tx, rx) = channel::<T>();
   thread::spawn(move || {
     let r = sync_code();
-    if let Err(_) = tx.send(r) {
+    if tx.send(r).is_err() {
       tracing::error!("oneshot error");
     };
   });
@@ -96,7 +96,7 @@ pub async fn get_program_accounts(
   program_id: &Pubkey,
 ) -> Result<Vec<(Pubkey, Account)>> {
   let accounts = {
-    let program_id = program_id.clone();
+    let program_id = *program_id;
     let client = client.build();
     build_async(move || client.get_program_accounts(&program_id)).await??
   };

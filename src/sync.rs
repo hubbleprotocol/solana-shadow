@@ -123,7 +123,7 @@ impl SolanaChangeListener {
       // history log, so that when a reconnect event occurs
       // all those subscription messages are going to be replayed
       let mut history = self.subs_history.write().await;
-      history.push(sub_request.clone());
+      history.push(sub_request);
     }
 
     // map jsonrpc request id to pubkey, later on when
@@ -177,7 +177,7 @@ impl SolanaChangeListener {
       // history log, so that when a reconnect event occurs
       // all those subscription messages are going to be replayed
       let mut history = self.subs_history.write().await;
-      history.push(sub_request.clone());
+      history.push(sub_request);
     }
 
     // map jsonrpc request id to pubkey, later on when
