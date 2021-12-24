@@ -1,7 +1,7 @@
-pub use anyhow::Result;
 use solana_client::client_error::ClientError;
 use solana_sdk::pubkey::ParsePubkeyError;
 use thiserror::Error;
+use tokio::sync::oneshot::error::RecvError;
 use tokio::task::JoinError;
 use tokio_tungstenite::tungstenite::Error as WsError;
 
@@ -21,6 +21,9 @@ pub enum Error {
 
   #[error("WebSocket error")]
   WebSocketError(#[from] WsError),
+
+  #[error("AsyncWrap error")]
+  AsyncWrapError(#[from] RecvError),
 
   #[error("Notification for an unknown subscription")]
   UnknownSubscription,
@@ -44,4 +47,4 @@ pub enum Error {
   InternalSynchronizationError(#[from] JoinError),
 }
 
-// pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;

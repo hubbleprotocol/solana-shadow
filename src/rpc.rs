@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::thread;
 use tokio::sync::oneshot::channel;
 
@@ -8,6 +7,8 @@ use solana_sdk::{
   commitment_config::{CommitmentConfig, CommitmentLevel},
   pubkey::Pubkey,
 };
+
+use crate::error::Result;
 
 /// Helper to convert sync code to async using an oneshot channel
 /// TODO: improve this with a timeout
@@ -24,7 +25,7 @@ where
     };
   });
 
-  rx.await.map_err(|e| anyhow::anyhow!("RecvError: {:?}", e))
+  Ok(rx.await?)
 }
 
 #[derive(Clone)]

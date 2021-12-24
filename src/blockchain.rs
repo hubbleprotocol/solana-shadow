@@ -179,7 +179,7 @@ impl BlockchainShadow {
   pub async fn worker(mut self) -> Result<()> {
     match self.sync_worker.take() {
       Some(handle) => Ok(handle.await??),
-      None => Err(Error::WorkerDead)?,
+      None => Err(Error::WorkerDead),
     }
   }
 
