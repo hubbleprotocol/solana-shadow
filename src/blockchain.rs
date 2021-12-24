@@ -84,20 +84,12 @@ impl BlockchainShadow {
   }
 
   pub async fn add_accounts(&mut self, accounts: &[Pubkey]) -> Result<()> {
-    let client = rpc::ClientBuilder::new(
-      self.network().rpc_url(),
-      self.options.commitment,
-    );
-
-    let accounts = rpc::get_multiple_accounts(client, accounts).await?;
-
-    for (key, acc) in accounts {
-      self.accounts.insert(key, acc);
+    for key in accounts {
       self
         .sub_req
         .clone()
         .unwrap()
-        .send(SubRequest::Account(key))
+        .send(SubRequest::Account(*key))
         .map_err(|_| Error::InternalError)?;
     }
 
@@ -109,17 +101,6 @@ impl BlockchainShadow {
   }
 
   pub async fn add_program(&mut self, program_id: &Pubkey) -> Result<()> {
-    let client = rpc::ClientBuilder::new(
-      self.network().rpc_url(),
-      self.options.commitment,
-    );
-
-    let accounts: Vec<_> =
-      rpc::get_program_accounts(client, program_id).await?;
-    for (key, acc) in accounts {
-      self.accounts.insert(key, acc);
-    }
-
     self
       .sub_req
       .clone()
@@ -192,8 +173,13 @@ impl BlockchainShadow {
     let accs_ref = self.accounts.clone();
     let updates_tx = self.ext_updates.clone();
     let options = self.options.clone();
+    let client = rpc::ClientBuilder::new(
+      self.network().rpc_url(),
+      self.options.commitment,
+    );
     self.sync_worker = Some(tokio::spawn(async move {
-      let mut listener = SolanaChangeListener::new(options).await?;
+      let mut listener =
+        SolanaChangeListener::new(client, accs_ref.clone(), options).await?;
       loop {
         tokio::select! {
           recv_result = listener.recv() => {

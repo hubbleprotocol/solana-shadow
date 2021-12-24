@@ -12,7 +12,10 @@ use solana_client::client_error::reqwest::Url;
 use solana_sdk::{account::Account, pubkey::Pubkey};
 use std::{
   convert::TryInto,
-  sync::atomic::{AtomicU64, Ordering},
+  sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+  },
 };
 use tokio::{net::TcpStream, sync::RwLock};
 use tokio_tungstenite::{
@@ -21,6 +24,8 @@ use tokio_tungstenite::{
   MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, info, warn};
+
+use crate::rpc;
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type WsReader = SplitStream<WsStream>;
@@ -48,10 +53,16 @@ pub(crate) struct SolanaChangeListener {
   subscriptions: DashMap<u64, SubRequest>,
   subs_history: RwLock<Vec<SubRequest>>,
   sync_options: SyncOptions,
+  client: rpc::ClientBuilder,
+  accounts: Arc<DashMap<Pubkey, Account>>,
 }
 
 impl SolanaChangeListener {
-  pub async fn new(sync_options: SyncOptions) -> Result<Self> {
+  pub async fn new(
+    client: rpc::ClientBuilder,
+    accounts: Arc<DashMap<Pubkey, Account>>,
+    sync_options: SyncOptions,
+  ) -> Result<Self> {
     let mut url: Url = sync_options
       .network
       .wss_url()
@@ -75,6 +86,8 @@ impl SolanaChangeListener {
       subscriptions: DashMap::new(),
       subs_history: RwLock::new(Vec::new()),
       sync_options,
+      client,
+      accounts,
     })
   }
 
@@ -209,9 +222,30 @@ impl SolanaChangeListener {
           // notifications.
           if let SolanaMessage::Confirmation { id, result, .. } = message {
             if let Some(sub_request) = self.pending.get(&id) {
+              self.subscriptions.insert(result, *sub_request); // todo remove from pending
               match *sub_request {
-                SubRequest::Account(_) | SubRequest::Program(_) => {
-                  self.subscriptions.insert(result, *sub_request); // todo remove from pending
+                SubRequest::Account(account) => {
+                  let (key, acc) =
+                    rpc::get_account(self.client.clone(), account).await?;
+
+                  // only insert when we have no entry, we could have received
+                  // an update
+                  self.accounts.entry(key).or_insert(acc);
+                }
+                SubRequest::Program(program_id) => {
+                  // we have a successful program subscription, so now lets get
+                  // all program accounts and add them to our accounts
+                  let accounts: Vec<_> =
+                    rpc::get_program_accounts(self.client.clone(), &program_id)
+                      .await?;
+
+                  // we only insert the account fetched from RPC
+                  // when no other account exists in the accounts DashMap
+                  // we could have received an update while we where fetching
+                  // the program accounts
+                  for (key, acc) in accounts {
+                    self.accounts.entry(key).or_insert(acc);
+                  }
                 }
                 SubRequest::ReconnectAll => warn!("SubRequest::ReconnectAll"),
               };
@@ -239,9 +273,6 @@ impl SolanaChangeListener {
         tokio::task::yield_now().await;
       }
     }
-
-    #[allow(unreachable_code)]
-    Ok(None)
   }
 
   pub async fn reconnect_all(&mut self) -> Result<()> {

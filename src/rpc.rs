@@ -52,6 +52,7 @@ impl ClientBuilder {
   }
 }
 
+#[allow(unused)]
 pub async fn get_multiple_accounts(
   client: ClientBuilder,
   accounts: &[Pubkey],
@@ -77,6 +78,17 @@ pub async fn get_multiple_accounts(
   }
 
   Ok(valid_accounts)
+}
+
+pub async fn get_account(
+  client: ClientBuilder,
+  account: Pubkey,
+) -> Result<(Pubkey, Account)> {
+  let client = client.build();
+  Ok((
+    account,
+    build_async(move || client.get_account(&account)).await??,
+  ))
 }
 
 pub async fn get_program_accounts(
