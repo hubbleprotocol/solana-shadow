@@ -78,3 +78,16 @@ pub async fn get_multiple_accounts(
 
   Ok(valid_accounts)
 }
+
+pub async fn get_program_accounts(
+  client: ClientBuilder,
+  program_id: &Pubkey,
+) -> Result<Vec<(Pubkey, Account)>> {
+  let accounts = {
+    let program_id = program_id.clone();
+    let client = client.build();
+    build_async(move || client.get_program_accounts(&program_id)).await??
+  };
+
+  Ok(accounts)
+}

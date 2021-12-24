@@ -4,11 +4,8 @@ use crate::{
   Error, Network, Result,
 };
 use dashmap::DashMap;
-use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
-  account::Account,
-  commitment_config::{CommitmentConfig, CommitmentLevel},
-  pubkey::Pubkey,
+  account::Account, commitment_config::CommitmentLevel, pubkey::Pubkey,
 };
 
 use std::{sync::Arc, time::Duration};
@@ -92,9 +89,9 @@ impl BlockchainShadow {
       self.options.commitment,
     );
 
-    let initial = rpc::get_multiple_accounts(client, accounts).await?;
+    let accounts = rpc::get_multiple_accounts(client, accounts).await?;
 
-    for (key, acc) in initial {
+    for (key, acc) in accounts {
       self.accounts.insert(key, acc);
       self
         .sub_req
@@ -112,19 +109,17 @@ impl BlockchainShadow {
   }
 
   pub async fn add_program(&mut self, program_id: &Pubkey) -> Result<()> {
-    let initial: Vec<_> = RpcClient::new_with_commitment(
+    let client = rpc::ClientBuilder::new(
       self.network().rpc_url(),
-      CommitmentConfig {
-        commitment: self.options.commitment,
-      },
-    )
-    .get_program_accounts(program_id)?
-    .into_iter()
-    .collect();
+      self.options.commitment,
+    );
 
-    for (key, acc) in initial {
+    let accounts: Vec<_> =
+      rpc::get_program_accounts(client, program_id).await?;
+    for (key, acc) in accounts {
       self.accounts.insert(key, acc);
     }
+
     self
       .sub_req
       .clone()
