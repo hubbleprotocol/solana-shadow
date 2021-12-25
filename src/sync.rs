@@ -327,6 +327,10 @@ impl SolanaChangeListener {
     self.pending = DashMap::new();
     self.subscriptions = DashMap::new();
 
+    // note: this is like draining the DashMap
+    // we need this to ensure fresh accounts state
+    self.accounts.retain(|_, _| false);
+
     let mut stream = old_writer
       .unwrap()
       .reunite(old_reader.unwrap())
@@ -341,12 +345,10 @@ impl SolanaChangeListener {
       }
     });
 
-    #[allow(unused_assignments)]
-    let mut history = Vec::new();
-    {
+    let history = {
       let shared_history = self.subs_history.read().await;
-      history = shared_history.clone();
-    }
+      shared_history.clone()
+    };
 
     for sub in history.iter() {
       match sub {
