@@ -1,4 +1,5 @@
 use crate::{
+  blockchain::SubRequestCall,
   message::{NotificationParams, NotificationValue, SolanaMessage},
   Error, Result, SyncOptions,
 };
@@ -17,7 +18,10 @@ use std::{
     Arc,
   },
 };
-use tokio::{net::TcpStream, sync::RwLock};
+use tokio::{
+  net::TcpStream,
+  sync::{oneshot, RwLock},
+};
 use tokio_tungstenite::{
   connect_async,
   tungstenite::{self, Message},
@@ -49,7 +53,7 @@ pub(crate) struct SolanaChangeListener {
   reader: Option<WsReader>,
   writer: Option<WsWriter>,
   reqid: AtomicU64,
-  pending: DashMap<u64, SubRequest>,
+  pending: DashMap<u64, SubRequestCall>,
   subscriptions: DashMap<u64, SubRequest>,
   subs_history: RwLock<Vec<SubRequest>>,
   sync_options: SyncOptions,
@@ -96,13 +100,20 @@ impl SolanaChangeListener {
   /// When this method returns, it does not mean that a subscription
   /// has been successfully created, but only the the request was
   /// sent successfully.
-  pub async fn subscribe_account(&mut self, account: Pubkey) -> Result<()> {
-    self.subscribe_account_internal(account, true).await
+  pub async fn subscribe_account(
+    &mut self,
+    account: Pubkey,
+    oneshot: Option<oneshot::Sender<Vec<Account>>>,
+  ) -> Result<()> {
+    self
+      .subscribe_account_internal(account, oneshot, true)
+      .await
   }
 
   async fn subscribe_account_internal(
     &mut self,
     account: Pubkey,
+    oneshot: Option<oneshot::Sender<Vec<Account>>>,
     record: bool,
   ) -> Result<()> {
     let reqid = self.reqid.fetch_add(1, Ordering::SeqCst);
@@ -133,7 +144,7 @@ impl SolanaChangeListener {
     // the account public key, instead they use the
     // solana-generated subscription id to identify
     // an account.
-    self.pending.insert(reqid, sub_request);
+    self.pending.insert(reqid, (sub_request, oneshot));
     loop {
       if let Some(ref mut writer) = self.writer {
         writer.send(Message::Text(request.to_string())).await?;
@@ -150,13 +161,20 @@ impl SolanaChangeListener {
   /// When this method returns, it does not mean that a subscription
   /// has been successfully created, but only the the request was
   /// sent successfully.
-  pub async fn subscribe_program(&mut self, account: Pubkey) -> Result<()> {
-    self.subscribe_program_internal(account, true).await
+  pub async fn subscribe_program(
+    &mut self,
+    account: Pubkey,
+    oneshot: Option<oneshot::Sender<Vec<Account>>>,
+  ) -> Result<()> {
+    self
+      .subscribe_program_internal(account, oneshot, true)
+      .await
   }
 
   async fn subscribe_program_internal(
     &mut self,
     account: Pubkey,
+    oneshot: Option<oneshot::Sender<Vec<Account>>>,
     record: bool,
   ) -> Result<()> {
     let reqid = self.reqid.fetch_add(1, Ordering::SeqCst);
@@ -187,7 +205,7 @@ impl SolanaChangeListener {
     // the account public key, instead they use the
     // solana-generated subscription id to identify
     // an account.
-    self.pending.insert(reqid, sub_request);
+    self.pending.insert(reqid, (sub_request, oneshot));
     loop {
       if let Some(ref mut writer) = self.writer {
         writer.send(Message::Text(request.to_string())).await?;
@@ -221,16 +239,25 @@ impl SolanaChangeListener {
           // of this method, so we keep looping and listening for interesting
           // notifications.
           if let SolanaMessage::Confirmation { id, result, .. } = message {
-            if let Some(sub_request) = self.pending.get(&id) {
-              self.subscriptions.insert(result, *sub_request); // todo remove from pending
-              match *sub_request {
+            if let Some((_, (sub_request, oneshot))) = self.pending.remove(&id)
+            {
+              self.subscriptions.insert(result, sub_request);
+              match sub_request {
                 SubRequest::Account(account) => {
                   let (key, acc) =
                     rpc::get_account(self.client.clone(), account).await?;
 
                   // only insert when we have no entry, we could have received
                   // an update
-                  self.accounts.entry(key).or_insert(acc);
+                  self.accounts.entry(key).or_insert(acc.clone());
+
+                  // note: we can use unwrap here as we are sure we got
+                  // the key from above
+                  if let Some(oneshot) = oneshot {
+                    if oneshot.send(vec![acc]).is_err() {
+                      tracing::warn!("receiver dropped")
+                    }
+                  }
                 }
                 SubRequest::Program(program_id) => {
                   // we have a successful program subscription, so now lets get
@@ -243,14 +270,27 @@ impl SolanaChangeListener {
                   // when no other account exists in the accounts DashMap
                   // we could have received an update while we where fetching
                   // the program accounts
+                  let mut result: Vec<Account> = vec![];
                   for (key, acc) in accounts {
                     self.accounts.entry(key).or_insert(acc);
+                    // note: ne use unwrap as we now entry exists
+                    result
+                      .push(self.accounts.get(&key).unwrap().value().clone());
+                  }
+
+                  // return value all the way back to the caller
+                  if let Some(oneshot) = oneshot {
+                    if oneshot.send(result).is_err() {
+                      tracing::warn!("receiver dropped")
+                    }
                   }
                 }
-                SubRequest::ReconnectAll => warn!("SubRequest::ReconnectAll"),
+                SubRequest::ReconnectAll => {
+                  // note: we safely ignore this one
+                }
               };
 
-              debug!("created subscripton {} for {:?}", &result, &*sub_request);
+              debug!("created subscripton {} for {:?}", &result, &sub_request);
             } else {
               warn!("Unrecognized subscription id: ({}, {})", id, result);
             }
@@ -312,11 +352,11 @@ impl SolanaChangeListener {
       match sub {
         SubRequest::Account(acc) => {
           info!("recreating account subscription for {}", &acc);
-          self.subscribe_account_internal(*acc, false).await?
+          self.subscribe_account_internal(*acc, None, false).await?
         }
         SubRequest::Program(acc) => {
           info!("recreating program subscription for {}", &acc);
-          self.subscribe_program_internal(*acc, false).await?
+          self.subscribe_program_internal(*acc, None, false).await?
         }
         _ => panic!("invalid history value"),
       }

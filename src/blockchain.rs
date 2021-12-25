@@ -13,12 +13,15 @@ use tokio::{
   sync::{
     broadcast::{self, Receiver, Sender},
     mpsc::{unbounded_channel, UnboundedSender},
+    oneshot,
   },
   task::JoinHandle,
 };
 use tracing::{debug, error, info};
 
 type AccountsMap = DashMap<Pubkey, Account>;
+pub(crate) type SubRequestCall =
+  (SubRequest, Option<oneshot::Sender<Vec<Account>>>);
 
 /// This parameter control how many updates are going to be stored in memory
 /// for update receivers (if any subscribed) before it starts returning dropping
@@ -58,7 +61,7 @@ impl Default for SyncOptions {
 pub struct BlockchainShadow {
   options: SyncOptions,
   accounts: Arc<AccountsMap>,
-  sub_req: Option<UnboundedSender<SubRequest>>,
+  sub_req: Option<UnboundedSender<SubRequestCall>>,
   sync_worker: Option<JoinHandle<Result<()>>>,
   monitor_worker: Option<JoinHandle<Result<()>>>,
   ext_updates: Sender<(Pubkey, Account)>,
@@ -83,31 +86,49 @@ impl BlockchainShadow {
     Ok(instance)
   }
 
-  pub async fn add_accounts(&mut self, accounts: &[Pubkey]) -> Result<()> {
+  pub async fn add_accounts(
+    &mut self,
+    accounts: &[Pubkey],
+  ) -> Result<Vec<Option<Account>>> {
+    let mut result = Vec::new();
+
     for key in accounts {
-      self
-        .sub_req
-        .clone()
-        .unwrap()
-        .send(SubRequest::Account(*key))
-        .map_err(|_| Error::InternalError)?;
+      result.push(self.add_account(key).await?);
     }
 
-    Ok(())
+    Ok(result)
   }
 
-  pub async fn add_account(&mut self, account: &Pubkey) -> Result<()> {
-    self.add_accounts(&[*account]).await
-  }
+  pub async fn add_account(
+    &mut self,
+    account: &Pubkey,
+  ) -> Result<Option<Account>> {
+    let (oneshot, result) = oneshot::channel::<Vec<Account>>();
 
-  pub async fn add_program(&mut self, program_id: &Pubkey) -> Result<()> {
     self
       .sub_req
       .clone()
       .unwrap()
-      .send(SubRequest::Program(*program_id))
+      .send((SubRequest::Account(*account), Some(oneshot)))
       .map_err(|_| Error::InternalError)?;
-    Ok(())
+
+    Ok(result.await?.pop())
+  }
+
+  pub async fn add_program(
+    &mut self,
+    program_id: &Pubkey,
+  ) -> Result<Vec<Account>> {
+    let (oneshot, result) = oneshot::channel();
+
+    self
+      .sub_req
+      .clone()
+      .unwrap()
+      .send((SubRequest::Program(*program_id), Some(oneshot)))
+      .map_err(|_| Error::InternalError)?;
+
+    Ok(result.await?)
   }
 
   pub async fn new_for_accounts(
@@ -167,7 +188,8 @@ impl BlockchainShadow {
 impl BlockchainShadow {
   async fn create_worker(&mut self) -> Result<()> {
     // subscription requests from blockchain shadow -> listener
-    let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
+    let (subscribe_tx, mut subscribe_rx) =
+      unbounded_channel::<(SubRequest, Option<oneshot::Sender<_>>)>();
 
     self.sub_req = Some(subscribe_tx);
     let accs_ref = self.accounts.clone();
@@ -202,9 +224,9 @@ impl BlockchainShadow {
           },
           Some(subreq) = subscribe_rx.recv() => {
             match subreq {
-              SubRequest::Account(pubkey) => listener.subscribe_account(pubkey).await?,
-              SubRequest::Program(pubkey) => listener.subscribe_program(pubkey).await?,
-              SubRequest::ReconnectAll => listener.reconnect_all().await?
+              ( SubRequest::Account(pubkey), oneshot ) => listener.subscribe_account(pubkey, oneshot).await?,
+              ( SubRequest::Program(pubkey), oneshot ) => listener.subscribe_program(pubkey, oneshot).await?,
+              ( SubRequest::ReconnectAll, _ ) => listener.reconnect_all().await?
             }
           }
         };
@@ -224,7 +246,7 @@ impl BlockchainShadow {
           tokio::time::sleep(every).await;
           channel_clone
             .unwrap()
-            .send(SubRequest::ReconnectAll)
+            .send((SubRequest::ReconnectAll, None))
             .map_err(|_| Error::InternalError)?;
         }
       }));
