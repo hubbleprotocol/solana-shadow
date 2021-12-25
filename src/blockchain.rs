@@ -214,8 +214,7 @@ impl BlockchainShadow {
                 }
               },
               Ok(None) => {
-                // note: should there be no reconnect_all here?
-                error!("Websocket connection to solana dropped");
+                unreachable!();
               },
               Err(e) => {
                 error!("error in the sync worker thread: {:?}", e);

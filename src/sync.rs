@@ -247,14 +247,12 @@ impl SolanaChangeListener {
                   let (key, acc) =
                     rpc::get_account(self.client.clone(), account).await?;
 
-                  // only insert when we have no entry, we could have received
-                  // an update
-                  self.accounts.entry(key).or_insert(acc.clone());
+                  // only insert entry if we have not received an update
+                  // from our subscription
+                  let entry = self.accounts.entry(key).or_insert(acc.clone());
 
-                  // note: we can use unwrap here as we are sure we got
-                  // the key from above
                   if let Some(oneshot) = oneshot {
-                    if oneshot.send(vec![acc]).is_err() {
+                    if oneshot.send(vec![entry.value().clone()]).is_err() {
                       tracing::warn!("receiver dropped")
                     }
                   }
@@ -266,16 +264,12 @@ impl SolanaChangeListener {
                     rpc::get_program_accounts(self.client.clone(), &program_id)
                       .await?;
 
-                  // we only insert the account fetched from RPC
-                  // when no other account exists in the accounts DashMap
-                  // we could have received an update while we where fetching
-                  // the program accounts
+                  // only insert entry if we have not received an update
+                  // from our subscription
                   let mut result: Vec<Account> = vec![];
                   for (key, acc) in accounts {
-                    self.accounts.entry(key).or_insert(acc);
-                    // note: ne use unwrap as we now entry exists
-                    result
-                      .push(self.accounts.get(&key).unwrap().value().clone());
+                    let entry = self.accounts.entry(key).or_insert(acc);
+                    result.push(entry.value().clone());
                   }
 
                   // return value all the way back to the caller
