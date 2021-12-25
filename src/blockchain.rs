@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{
   sync::{
     broadcast::{self, Receiver, Sender},
-    mpsc::{unbounded_channel, UnboundedSender},
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     oneshot,
   },
   task::JoinHandle,
@@ -61,7 +61,7 @@ impl Default for SyncOptions {
 pub struct BlockchainShadow {
   options: SyncOptions,
   accounts: Arc<AccountsMap>,
-  sub_req: Option<UnboundedSender<SubRequestCall>>,
+  sub_req: UnboundedSender<SubRequestCall>,
   sync_worker: Option<JoinHandle<Result<()>>>,
   monitor_worker: Option<JoinHandle<Result<()>>>,
   ext_updates: Sender<(Pubkey, Account)>,
@@ -71,16 +71,19 @@ pub struct BlockchainShadow {
 impl BlockchainShadow {
   pub async fn new(options: SyncOptions) -> Result<Self> {
     let max_lag = options.max_lag.unwrap_or(MAX_UPDATES_SUBSCRIBER_LAG);
+
+    let (subscribe_tx, subscribe_rx) = unbounded_channel::<SubRequestCall>();
+
     let mut instance = Self {
       options,
       accounts: Arc::new(AccountsMap::new()),
       sync_worker: None,
       monitor_worker: None,
-      sub_req: None,
+      sub_req: subscribe_tx,
       ext_updates: broadcast::channel(max_lag).0,
     };
 
-    instance.create_worker().await?;
+    instance.create_worker(subscribe_rx).await?;
     instance.create_monitor_worker().await?;
 
     Ok(instance)
@@ -108,7 +111,6 @@ impl BlockchainShadow {
     self
       .sub_req
       .clone()
-      .unwrap()
       .send((SubRequest::Account(*account), Some(oneshot)))
       .map_err(|_| Error::InternalError)?;
 
@@ -124,7 +126,6 @@ impl BlockchainShadow {
     self
       .sub_req
       .clone()
-      .unwrap()
       .send((SubRequest::Program(*program_id), Some(oneshot)))
       .map_err(|_| Error::InternalError)?;
 
@@ -186,12 +187,11 @@ impl BlockchainShadow {
 }
 
 impl BlockchainShadow {
-  async fn create_worker(&mut self) -> Result<()> {
+  async fn create_worker(
+    &mut self,
+    mut subscribe_rx: UnboundedReceiver<SubRequestCall>,
+  ) -> Result<()> {
     // subscription requests from blockchain shadow -> listener
-    let (subscribe_tx, mut subscribe_rx) =
-      unbounded_channel::<(SubRequest, Option<oneshot::Sender<_>>)>();
-
-    self.sub_req = Some(subscribe_tx);
     let accs_ref = self.accounts.clone();
     let updates_tx = self.ext_updates.clone();
     let options = self.options.clone();
@@ -238,15 +238,13 @@ impl BlockchainShadow {
   }
 
   async fn create_monitor_worker(&mut self) -> Result<()> {
-    let channel = self.sub_req.clone();
     if let Some(every) = self.options.reconnect_every {
+      let channel = self.sub_req.clone();
       self.monitor_worker = Some(tokio::spawn(async move {
         loop {
-          let channel_clone = channel.clone();
           info!("reestablising connection to solana");
           tokio::time::sleep(every).await;
-          channel_clone
-            .unwrap()
+          channel
             .send((SubRequest::ReconnectAll, None))
             .map_err(|_| Error::InternalError)?;
         }
