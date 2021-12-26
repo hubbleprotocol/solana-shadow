@@ -111,6 +111,7 @@ impl SolanaChangeListener {
       .await
   }
 
+  #[tracing::instrument(skip(self, oneshot))]
   async fn subscribe_account_internal(
     &mut self,
     account: Pubkey,
@@ -148,9 +149,11 @@ impl SolanaChangeListener {
     self.pending.insert(reqid, (sub_request, oneshot));
     loop {
       if let Some(ref mut writer) = self.writer {
+        debug!(request=%request, "accountSubscribe send over websocket");
         writer.send(Message::Text(request.to_string())).await?;
         break;
       } else {
+        debug!("skipping sending no writer available");
         tokio::task::yield_now().await;
       }
     }
@@ -172,6 +175,7 @@ impl SolanaChangeListener {
       .await
   }
 
+  #[tracing::instrument(skip(self, oneshot))]
   async fn subscribe_program_internal(
     &mut self,
     account: Pubkey,
@@ -209,15 +213,18 @@ impl SolanaChangeListener {
     self.pending.insert(reqid, (sub_request, oneshot));
     loop {
       if let Some(ref mut writer) = self.writer {
+        debug!(request=%request, "programSubscribe send over websocket");
         writer.send(Message::Text(request.to_string())).await?;
         break;
       } else {
+        debug!("skipping sending no writer available");
         tokio::task::yield_now().await;
       }
     }
     Ok(())
   }
 
+  #[tracing::instrument(skip(self))]
   pub async fn recv(&mut self) -> Result<Option<AccountUpdate>> {
     loop {
       if let Some(ref mut reader) = self.reader {
@@ -232,6 +239,8 @@ impl SolanaChangeListener {
               Err(Error::WebSocketError(e))
             }
           }?;
+
+          tracing::trace!(?message, "received from wss");
 
           // This message is a JSON-RPC response to a subscription request.
           // Here we are mapping the request id with the subscription id,
@@ -254,18 +263,23 @@ impl SolanaChangeListener {
                   match self.accounts.entry(key) {
                     Occupied(mut e) => {
                       let (_, updated) = e.get().clone();
+
+                      tracing::debug!(?account, ?updated, "occupied branch");
                       if !updated {
                         // we update with our RPC values
                         e.insert((acc.clone(), true));
                       }
                     }
                     Vacant(e) => {
+                      tracing::debug!(?account, "vacant branch");
                       e.insert((acc, true));
                     }
                   }
 
                   if let Some(oneshot) = oneshot {
                     let account = self.accounts.get(&key).unwrap().0.clone();
+
+                    tracing::debug!(?account, "oneshot send");
                     if oneshot.send(vec![account]).is_err() {
                       tracing::warn!("receiver dropped")
                     }
@@ -285,6 +299,13 @@ impl SolanaChangeListener {
                     match self.accounts.entry(key) {
                       Occupied(mut e) => {
                         let (account, updated) = e.get().clone();
+
+                        tracing::debug!(
+                          ?program_id,
+                          ?account,
+                          ?updated,
+                          "occupied branch"
+                        );
                         if !updated {
                           // we update with our RPC values
                           e.insert((acc.clone(), true));
@@ -298,6 +319,7 @@ impl SolanaChangeListener {
                         }
                       }
                       Vacant(e) => {
+                        tracing::debug!(?program_id, ?acc, "vacant branch");
                         e.insert((acc, true));
                       }
                     }
@@ -305,6 +327,7 @@ impl SolanaChangeListener {
 
                   // return value all the way back to the caller
                   if let Some(oneshot) = oneshot {
+                    tracing::debug!(?program_id, accounts_len=?result.len(), "oneshot send");
                     if oneshot.send(result).is_err() {
                       tracing::warn!("receiver dropped")
                     }

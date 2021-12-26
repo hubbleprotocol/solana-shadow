@@ -26,6 +26,7 @@ solana-sdk = "1.8.3"
 solana-client = "1.8.3"
 tokio = { version = "1.13", features = ["full"] }
 tokio-tungstenite = { version = "0.16.1", features = ["native-tls"] }
+tracing-futures = "0.2.5"
 
 [dev-dependencies]
 anyhow = "1"

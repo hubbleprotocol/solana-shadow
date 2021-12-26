@@ -18,6 +18,7 @@ use tokio::{
   task::JoinHandle,
 };
 use tracing::{debug, error, info};
+use tracing_futures::Instrument;
 
 pub(crate) type AccountsMap = DashMap<Pubkey, (Account, bool)>;
 pub(crate) type SubRequestCall =
@@ -213,39 +214,49 @@ impl BlockchainShadow {
       self.options.rpc_timeout,
       self.options.commitment,
     );
-    self.sync_worker = Some(tokio::spawn(async move {
-      let mut listener =
-        SolanaChangeListener::new(client, accs_ref.clone(), options).await?;
-      loop {
-        tokio::select! {
-          recv_result = listener.recv() => {
-            match recv_result {
-              Ok(Some(AccountUpdate { pubkey, account })) => {
-                debug!("account {} updated", &pubkey);
-                accs_ref.insert(pubkey, ( account.clone(), true ));
-                if updates_tx.receiver_count() != 0 {
-                  updates_tx.send((pubkey, account)).unwrap();
+    self.sync_worker = Some(tokio::spawn(
+      async move {
+        let mut listener =
+          SolanaChangeListener::new(client, accs_ref.clone(), options).await?;
+        loop {
+          tokio::select! {
+            recv_result = listener.recv() => {
+              match recv_result {
+                Ok(Some(AccountUpdate { pubkey, account })) => {
+                  debug!("account {} updated", &pubkey);
+                  accs_ref.insert(pubkey, ( account.clone(), true ));
+                  if updates_tx.receiver_count() != 0 {
+                    updates_tx.send((pubkey, account)).unwrap();
+                  }
+                },
+                Ok(None) => {
+                  unreachable!();
+                },
+                Err(e) => {
+                  error!("error in the sync worker thread: {:?}", e);
+                  listener.reconnect_all().await?;
                 }
-              },
-              Ok(None) => {
-                unreachable!();
-              },
-              Err(e) => {
-                error!("error in the sync worker thread: {:?}", e);
-                listener.reconnect_all().await?;
+              }
+            },
+            Some(subreq) = subscribe_rx.recv() => {
+              match subreq {
+                ( SubRequest::Account(pubkey), oneshot ) => {
+                    debug!(?pubkey, "subscribe_account recv");
+                    listener.subscribe_account(pubkey, oneshot).await? },
+                ( SubRequest::Program(pubkey), oneshot ) => {
+                    debug!(?pubkey, "subscribe_program recv");
+                    listener.subscribe_program(pubkey, oneshot).await? },
+                ( SubRequest::ReconnectAll, _ ) => {
+                    debug!("reconnect_all recv");
+                    listener.reconnect_all().await?
+                }
               }
             }
-          },
-          Some(subreq) = subscribe_rx.recv() => {
-            match subreq {
-              ( SubRequest::Account(pubkey), oneshot ) => listener.subscribe_account(pubkey, oneshot).await?,
-              ( SubRequest::Program(pubkey), oneshot ) => listener.subscribe_program(pubkey, oneshot).await?,
-              ( SubRequest::ReconnectAll, _ ) => listener.reconnect_all().await?
-            }
-          }
-        };
+          };
+        }
       }
-    }));
+      .instrument(tracing::debug_span!("worker_loop")),
+    ));
 
     Ok(())
   }
@@ -253,15 +264,18 @@ impl BlockchainShadow {
   async fn create_monitor_worker(&mut self) -> Result<()> {
     if let Some(every) = self.options.reconnect_every {
       let channel = self.sub_req.clone();
-      self.monitor_worker = Some(tokio::spawn(async move {
-        loop {
-          tokio::time::sleep(every).await;
-          info!("reestablising connection to solana");
-          channel
-            .send((SubRequest::ReconnectAll, None))
-            .map_err(|_| Error::InternalError)?;
+      self.monitor_worker = Some(tokio::spawn(
+        async move {
+          loop {
+            tokio::time::sleep(every).await;
+            info!("reestablising connection to solana");
+            if let Err(e) = channel.send((SubRequest::ReconnectAll, None)) {
+              tracing::error!(?e)
+            }
+          }
         }
-      }));
+        .instrument(tracing::debug_span!("monitor_worker_loop")),
+      ));
     }
     Ok(())
   }
