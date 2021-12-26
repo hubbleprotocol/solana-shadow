@@ -3,6 +3,7 @@ use solana_sdk::pubkey::ParsePubkeyError;
 use thiserror::Error;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::task::JoinError;
+use tokio::time::error::Elapsed;
 use tokio_tungstenite::tungstenite::Error as WsError;
 
 #[derive(Debug, Error)]
@@ -24,6 +25,9 @@ pub enum Error {
 
   #[error("AsyncWrap error")]
   AsyncWrapError(#[from] RecvError),
+
+  #[error("AsyncTimeout error")]
+  AsyncTimeoutError(#[from] Elapsed),
 
   #[error("Notification for an unknown subscription")]
   UnknownSubscription,

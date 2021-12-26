@@ -36,6 +36,7 @@ pub struct SyncOptions {
   pub network: Network,
   pub max_lag: Option<usize>,
   pub reconnect_every: Option<Duration>,
+  pub rpc_timeout: Duration,
   pub commitment: CommitmentLevel,
 }
 
@@ -46,6 +47,7 @@ impl Default for SyncOptions {
       max_lag: None,
       reconnect_every: None,
       commitment: CommitmentLevel::Finalized,
+      rpc_timeout: Duration::from_secs(12),
     }
   }
 }
@@ -197,6 +199,7 @@ impl BlockchainShadow {
     let options = self.options.clone();
     let client = rpc::ClientBuilder::new(
       self.network().rpc_url(),
+      self.options.rpc_timeout,
       self.options.commitment,
     );
     self.sync_worker = Some(tokio::spawn(async move {

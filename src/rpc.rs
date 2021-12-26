@@ -1,4 +1,4 @@
-use std::thread;
+use std::{thread, time::Duration};
 use tokio::sync::oneshot::channel;
 
 use solana_client::rpc_client::RpcClient;
@@ -11,33 +11,40 @@ use solana_sdk::{
 use crate::error::Result;
 
 /// Helper to convert sync code to async using an oneshot channel
-/// TODO: improve this with a timeout
-async fn build_async<F, T>(sync_code: F) -> Result<T>
+/// uses a timeout to ensure continuation of executing in case
+/// sync_code would panic
+async fn build_async<F, T>(timeout: Duration, sync_code: F) -> Result<T>
 where
   F: FnOnce() -> T + Send + 'static,
-  T: Send + 'static,
+  T: Send + std::fmt::Debug + 'static,
 {
   let (tx, rx) = channel::<T>();
   thread::spawn(move || {
+    // TODO: if the sync_code panics this
+    //       call will wait forever
     let r = sync_code();
-    if tx.send(r).is_err() {
-      tracing::error!("oneshot error");
-    };
+    tx.send(r).expect("Unable to send oneshot")
   });
 
-  Ok(rx.await?)
+  Ok(tokio::time::timeout(timeout, rx).await??)
 }
 
 #[derive(Clone)]
 pub struct ClientBuilder {
   rpc_url: String,
+  rpc_timeout: Duration,
   commitment: CommitmentLevel,
 }
 
 impl ClientBuilder {
-  pub fn new(rpc_url: String, commitment: CommitmentLevel) -> Self {
+  pub fn new(
+    rpc_url: String,
+    rpc_timeout: Duration,
+    commitment: CommitmentLevel,
+  ) -> Self {
     Self {
       rpc_url,
+      rpc_timeout,
       commitment,
     }
   }
@@ -59,8 +66,11 @@ pub async fn get_multiple_accounts(
 ) -> Result<Vec<(Pubkey, Account)>> {
   let unvalidated = {
     let accounts = accounts.to_vec();
-    let client = client.build();
-    build_async(move || client.get_multiple_accounts(&accounts)).await??
+    let rpc_client = client.build();
+    build_async(client.rpc_timeout, move || {
+      rpc_client.get_multiple_accounts(&accounts)
+    })
+    .await??
   };
 
   let valid_accounts: Vec<_> = unvalidated
@@ -84,10 +94,11 @@ pub async fn get_account(
   client: ClientBuilder,
   account: Pubkey,
 ) -> Result<(Pubkey, Account)> {
-  let client = client.build();
+  let rpc_client = client.build();
   Ok((
     account,
-    build_async(move || client.get_account(&account)).await??,
+    build_async(client.rpc_timeout, move || rpc_client.get_account(&account))
+      .await??,
   ))
 }
 
@@ -97,8 +108,11 @@ pub async fn get_program_accounts(
 ) -> Result<Vec<(Pubkey, Account)>> {
   let accounts = {
     let program_id = *program_id;
-    let client = client.build();
-    build_async(move || client.get_program_accounts(&program_id)).await??
+    let rpc_client = client.build();
+    build_async(client.rpc_timeout, move || {
+      rpc_client.get_program_accounts(&program_id)
+    })
+    .await??
   };
 
   Ok(accounts)
