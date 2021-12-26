@@ -262,7 +262,7 @@ impl SolanaChangeListener {
                   // from our subscription
                   match self.accounts.entry(key) {
                     Occupied(mut e) => {
-                      let (_, updated) = e.get().clone();
+                      let (_, updated) = e.get();
 
                       tracing::debug!(?account, ?updated, "occupied branch");
                       if !updated {

@@ -20,7 +20,7 @@ where
 {
   let (tx, rx) = channel::<T>();
 
-  let _jh = thread::spawn(move || {
+  thread::spawn(move || {
     // TODO: if the sync_code panics this
     //       call will wait forever
     let r = sync_code();
