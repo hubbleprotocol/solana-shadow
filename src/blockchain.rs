@@ -1,26 +1,27 @@
 use crate::{
+  rpc,
   sync::{AccountUpdate, SolanaChangeListener, SubRequest},
   Error, Network, Result,
 };
 use dashmap::DashMap;
-use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
-  account::Account,
-  commitment_config::{CommitmentConfig, CommitmentLevel},
-  pubkey::Pubkey,
+  account::Account, commitment_config::CommitmentLevel, pubkey::Pubkey,
 };
 
 use std::{sync::Arc, time::Duration};
 use tokio::{
   sync::{
     broadcast::{self, Receiver, Sender},
-    mpsc::{unbounded_channel, UnboundedSender},
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    oneshot,
   },
   task::JoinHandle,
 };
 use tracing::{debug, error, info};
 
 type AccountsMap = DashMap<Pubkey, Account>;
+pub(crate) type SubRequestCall =
+  (SubRequest, Option<oneshot::Sender<Vec<Account>>>);
 
 /// This parameter control how many updates are going to be stored in memory
 /// for update receivers (if any subscribed) before it starts returning dropping
@@ -35,6 +36,7 @@ pub struct SyncOptions {
   pub network: Network,
   pub max_lag: Option<usize>,
   pub reconnect_every: Option<Duration>,
+  pub rpc_timeout: Duration,
   pub commitment: CommitmentLevel,
 }
 
@@ -45,6 +47,7 @@ impl Default for SyncOptions {
       max_lag: None,
       reconnect_every: None,
       commitment: CommitmentLevel::Finalized,
+      rpc_timeout: Duration::from_secs(12),
     }
   }
 }
@@ -60,7 +63,7 @@ impl Default for SyncOptions {
 pub struct BlockchainShadow {
   options: SyncOptions,
   accounts: Arc<AccountsMap>,
-  sub_req: Option<UnboundedSender<SubRequest>>,
+  sub_req: UnboundedSender<SubRequestCall>,
   sync_worker: Option<JoinHandle<Result<()>>>,
   monitor_worker: Option<JoinHandle<Result<()>>>,
   ext_updates: Sender<(Pubkey, Account)>,
@@ -70,73 +73,65 @@ pub struct BlockchainShadow {
 impl BlockchainShadow {
   pub async fn new(options: SyncOptions) -> Result<Self> {
     let max_lag = options.max_lag.unwrap_or(MAX_UPDATES_SUBSCRIBER_LAG);
+
+    let (subscribe_tx, subscribe_rx) = unbounded_channel::<SubRequestCall>();
+
     let mut instance = Self {
       options,
       accounts: Arc::new(AccountsMap::new()),
       sync_worker: None,
       monitor_worker: None,
-      sub_req: None,
+      sub_req: subscribe_tx,
       ext_updates: broadcast::channel(max_lag).0,
     };
 
-    instance.create_worker().await?;
+    instance.create_worker(subscribe_rx).await?;
     instance.create_monitor_worker().await?;
 
     Ok(instance)
   }
 
-  pub async fn add_accounts(&mut self, accounts: &[Pubkey]) -> Result<()> {
-    let initial: Vec<_> = RpcClient::new_with_commitment(
-      self.network().rpc_url(),
-      CommitmentConfig {
-        commitment: self.options.commitment,
-      },
-    )
-    .get_multiple_accounts(accounts)?
-    .into_iter()
-    .zip(accounts.iter())
-    .filter(|(o, _)| o.is_some())
-    .map(|(acc, key)| (*key, acc.unwrap()))
-    .collect();
+  pub async fn add_accounts(
+    &mut self,
+    accounts: &[Pubkey],
+  ) -> Result<Vec<Option<Account>>> {
+    let mut result = Vec::new();
 
-    for (key, acc) in initial {
-      self.accounts.insert(key, acc);
-      self
-        .sub_req
-        .clone()
-        .unwrap()
-        .send(SubRequest::Account(key))
-        .map_err(|_| Error::InternalError)?;
+    for key in accounts {
+      result.push(self.add_account(key).await?);
     }
 
-    Ok(())
+    Ok(result)
   }
 
-  pub async fn add_account(&mut self, account: &Pubkey) -> Result<()> {
-    self.add_accounts(&[*account]).await
-  }
+  pub async fn add_account(
+    &mut self,
+    account: &Pubkey,
+  ) -> Result<Option<Account>> {
+    let (oneshot, result) = oneshot::channel::<Vec<Account>>();
 
-  pub async fn add_program(&mut self, program_id: &Pubkey) -> Result<()> {
-    let initial: Vec<_> = RpcClient::new_with_commitment(
-      self.network().rpc_url(),
-      CommitmentConfig {
-        commitment: self.options.commitment,
-      },
-    )
-    .get_program_accounts(program_id)?
-    .into_iter()
-    .collect();
-
-    for (key, acc) in initial {
-      self.accounts.insert(key, acc);
-    }
     self
       .sub_req
       .clone()
-      .unwrap()
-      .send(SubRequest::Program(*program_id))
+      .send((SubRequest::Account(*account), Some(oneshot)))
       .map_err(|_| Error::InternalError)?;
-    Ok(())
+
+    Ok(result.await?.pop())
+  }
+
+  pub async fn add_program(
+    &mut self,
+    program_id: &Pubkey,
+  ) -> Result<Vec<Account>> {
+    let (oneshot, result) = oneshot::channel();
+
+    self
+      .sub_req
+      .clone()
+      .send((SubRequest::Program(*program_id), Some(oneshot)))
+      .map_err(|_| Error::InternalError)?;
+
+    Ok(result.await?)
   }
 
   pub async fn new_for_accounts(
@@ -194,16 +189,22 @@ impl BlockchainShadow {
 }
 
 impl BlockchainShadow {
-  async fn create_worker(&mut self) -> Result<()> {
+  async fn create_worker(
+    &mut self,
+    mut subscribe_rx: UnboundedReceiver<SubRequestCall>,
+  ) -> Result<()> {
     // subscription requests from blockchain shadow -> listener
-    let (subscribe_tx, mut subscribe_rx) = unbounded_channel::<SubRequest>();
-
-    self.sub_req = Some(subscribe_tx);
     let accs_ref = self.accounts.clone();
     let updates_tx = self.ext_updates.clone();
     let options = self.options.clone();
+    let client = rpc::ClientBuilder::new(
+      self.network().rpc_url(),
+      self.options.rpc_timeout,
+      self.options.commitment,
+    );
     self.sync_worker = Some(tokio::spawn(async move {
-      let mut listener = SolanaChangeListener::new(options).await?;
+      let mut listener =
+        SolanaChangeListener::new(client, accs_ref.clone(), options).await?;
       loop {
         tokio::select! {
           recv_result = listener.recv() => {
@@ -216,7 +217,7 @@ impl BlockchainShadow {
                 }
               },
               Ok(None) => {
-                error!("Websocket connection to solana dropped");
+                unreachable!();
               },
               Err(e) => {
                 error!("error in the sync worker thread: {:?}", e);
@@ -226,9 +227,9 @@ impl BlockchainShadow {
           },
           Some(subreq) = subscribe_rx.recv() => {
             match subreq {
-              SubRequest::Account(pubkey) => listener.subscribe_account(pubkey).await?,
-              SubRequest::Program(pubkey) => listener.subscribe_program(pubkey).await?,
-              SubRequest::ReconnectAll => listener.reconnect_all().await?
+              ( SubRequest::Account(pubkey), oneshot ) => listener.subscribe_account(pubkey, oneshot).await?,
+              ( SubRequest::Program(pubkey), oneshot ) => listener.subscribe_program(pubkey, oneshot).await?,
+              ( SubRequest::ReconnectAll, _ ) => listener.reconnect_all().await?
             }
           }
         };
@@ -239,16 +240,14 @@ impl BlockchainShadow {
   }
 
   async fn create_monitor_worker(&mut self) -> Result<()> {
-    let channel = self.sub_req.clone();
     if let Some(every) = self.options.reconnect_every {
+      let channel = self.sub_req.clone();
       self.monitor_worker = Some(tokio::spawn(async move {
         loop {
-          let channel_clone = channel.clone();
           info!("reestablising connection to solana");
           tokio::time::sleep(every).await;
-          channel_clone
-            .unwrap()
-            .send(SubRequest::ReconnectAll)
+          channel
+            .send((SubRequest::ReconnectAll, None))
             .map_err(|_| Error::InternalError)?;
         }
       }));

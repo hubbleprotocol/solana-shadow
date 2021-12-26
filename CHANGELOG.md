@@ -1,3 +1,10 @@
+# 0.2.0
+
+- API change, `add_program`, `add_accounts` and `add_account` now return accounts
+- blocking rpc calls now executed in thread
+- changed "rpc call -> subscribe" into: "subsribe -> confirmation -> rpc call -> oneshot return"
+- added timeout on build_async 
+
 # 0.1.8
 
 - Setting commitment level on RpcClient calls.
