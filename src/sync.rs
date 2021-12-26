@@ -29,6 +29,7 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, info, warn};
 
+use crate::blockchain::AccountsMap;
 use crate::rpc;
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -58,13 +59,13 @@ pub(crate) struct SolanaChangeListener {
   subs_history: RwLock<Vec<SubRequest>>,
   sync_options: SyncOptions,
   client: rpc::ClientBuilder,
-  accounts: Arc<DashMap<Pubkey, Account>>,
+  accounts: Arc<AccountsMap>,
 }
 
 impl SolanaChangeListener {
   pub async fn new(
     client: rpc::ClientBuilder,
-    accounts: Arc<DashMap<Pubkey, Account>>,
+    accounts: Arc<AccountsMap>,
     sync_options: SyncOptions,
   ) -> Result<Self> {
     let mut url: Url = sync_options
@@ -238,6 +239,7 @@ impl SolanaChangeListener {
           // This type of message is not relevant to the external callers
           // of this method, so we keep looping and listening for interesting
           // notifications.
+          use dashmap::mapref::entry::Entry::{Occupied, Vacant};
           if let SolanaMessage::Confirmation { id, result, .. } = message {
             if let Some((_, (sub_request, oneshot))) = self.pending.remove(&id)
             {
@@ -249,10 +251,22 @@ impl SolanaChangeListener {
 
                   // only insert entry if we have not received an update
                   // from our subscription
-                  let entry = self.accounts.entry(key).or_insert(acc.clone());
+                  match self.accounts.entry(key) {
+                    Occupied(mut e) => {
+                      let (_, updated) = e.get().clone();
+                      if !updated {
+                        // we update with our RPC values
+                        e.insert((acc.clone(), true));
+                      }
+                    }
+                    Vacant(e) => {
+                      e.insert((acc, true));
+                    }
+                  }
 
                   if let Some(oneshot) = oneshot {
-                    if oneshot.send(vec![entry.value().clone()]).is_err() {
+                    let account = self.accounts.get(&key).unwrap().0.clone();
+                    if oneshot.send(vec![account]).is_err() {
                       tracing::warn!("receiver dropped")
                     }
                   }
@@ -268,8 +282,25 @@ impl SolanaChangeListener {
                   // from our subscription
                   let mut result: Vec<Account> = vec![];
                   for (key, acc) in accounts {
-                    let entry = self.accounts.entry(key).or_insert(acc);
-                    result.push(entry.value().clone());
+                    match self.accounts.entry(key) {
+                      Occupied(mut e) => {
+                        let (account, updated) = e.get().clone();
+                        if !updated {
+                          // we update with our RPC values
+                          e.insert((acc.clone(), true));
+                          result.push(acc);
+                        } else {
+                          // value updated over ws subscription
+                          // no need to update, and we push
+                          // the ws value to results to return the
+                          // latest
+                          result.push(account);
+                        }
+                      }
+                      Vacant(e) => {
+                        e.insert((acc, true));
+                      }
+                    }
                   }
 
                   // return value all the way back to the caller
@@ -321,9 +352,8 @@ impl SolanaChangeListener {
     self.pending = DashMap::new();
     self.subscriptions = DashMap::new();
 
-    // note: this is like draining the DashMap
-    // we need this to ensure fresh accounts state
-    self.accounts.clear();
+    // mark all values in account as cleared
+    self.accounts.alter_all(|_, (account, _)| (account, false));
 
     let mut stream = old_writer
       .unwrap()

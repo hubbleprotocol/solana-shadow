@@ -1,3 +1,7 @@
+# 0.2.1
+- tracking of change on accounts for reconnects
+- panic! on too low reconnect values, to avoid unstable behaviour
+
 # 0.2.0
 
 - API change, `add_program`, `add_accounts` and `add_account` now return accounts

@@ -19,7 +19,7 @@ use tokio::{
 };
 use tracing::{debug, error, info};
 
-type AccountsMap = DashMap<Pubkey, Account>;
+pub(crate) type AccountsMap = DashMap<Pubkey, (Account, bool)>;
 pub(crate) type SubRequestCall =
   (SubRequest, Option<oneshot::Sender<Vec<Account>>>);
 
@@ -30,6 +30,7 @@ pub(crate) type SubRequestCall =
 /// for now it is set to 64, which gives us about 30 seconds on Solana
 /// as there can be an update at most once every 400 miliseconds (blocktime)
 const MAX_UPDATES_SUBSCRIBER_LAG: usize = 64;
+const MIN_RECONNECT_EVERY: u64 = 30;
 
 #[derive(Clone)]
 pub struct SyncOptions {
@@ -73,6 +74,16 @@ pub struct BlockchainShadow {
 impl BlockchainShadow {
   pub async fn new(options: SyncOptions) -> Result<Self> {
     let max_lag = options.max_lag.unwrap_or(MAX_UPDATES_SUBSCRIBER_LAG);
+
+    // protect our enduser against to quick reconnects which would
+    // cause unstable behaviour
+    if options
+      .reconnect_every
+      .map(|v| v < Duration::from_secs(MIN_RECONNECT_EVERY))
+      .unwrap_or(false)
+    {
+      panic!("low reconnect_every duration causes unstable behaviour, minimum reconnect_every value is {} seconds", MIN_RECONNECT_EVERY)
+    }
 
     let (subscribe_tx, subscribe_rx) = unbounded_channel::<SubRequestCall>();
 
@@ -167,13 +178,13 @@ impl BlockchainShadow {
   pub fn for_each_account(&self, mut op: impl FnMut(&Pubkey, &Account)) {
     for pair in self.accounts.iter() {
       let pubkey = pair.pair().0;
-      let account = pair.pair().1;
+      let (account, _) = pair.pair().1;
       op(pubkey, account);
     }
   }
 
   pub fn get_account(&self, key: &Pubkey) -> Option<Account> {
-    self.accounts.get(key).map(|acc| acc.clone())
+    self.accounts.get(key).map(|acc| acc.clone().0)
   }
 
   pub async fn worker(mut self) -> Result<()> {
@@ -211,7 +222,7 @@ impl BlockchainShadow {
             match recv_result {
               Ok(Some(AccountUpdate { pubkey, account })) => {
                 debug!("account {} updated", &pubkey);
-                accs_ref.insert(pubkey, account.clone());
+                accs_ref.insert(pubkey, ( account.clone(), true ));
                 if updates_tx.receiver_count() != 0 {
                   updates_tx.send((pubkey, account)).unwrap();
                 }
@@ -244,8 +255,8 @@ impl BlockchainShadow {
       let channel = self.sub_req.clone();
       self.monitor_worker = Some(tokio::spawn(async move {
         loop {
-          info!("reestablising connection to solana");
           tokio::time::sleep(every).await;
+          info!("reestablising connection to solana");
           channel
             .send((SubRequest::ReconnectAll, None))
             .map_err(|_| Error::InternalError)?;
