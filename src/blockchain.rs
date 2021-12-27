@@ -31,7 +31,7 @@ pub(crate) type SubRequestCall =
 /// for now it is set to 64, which gives us about 30 seconds on Solana
 /// as there can be an update at most once every 400 miliseconds (blocktime)
 const MAX_UPDATES_SUBSCRIBER_LAG: usize = 64;
-const MIN_RECONNECT_EVERY: u64 = 30;
+const MIN_RECONNECT_EVERY: u64 = 5;
 
 #[derive(Clone)]
 pub struct SyncOptions {
@@ -39,6 +39,7 @@ pub struct SyncOptions {
   pub max_lag: Option<usize>,
   pub reconnect_every: Option<Duration>,
   pub rpc_timeout: Duration,
+  pub ws_connect_timeout: Duration,
   pub commitment: CommitmentLevel,
 }
 
@@ -50,6 +51,7 @@ impl Default for SyncOptions {
       reconnect_every: None,
       commitment: CommitmentLevel::Finalized,
       rpc_timeout: Duration::from_secs(12),
+      ws_connect_timeout: Duration::from_secs(12),
     }
   }
 }
@@ -230,6 +232,7 @@ impl BlockchainShadow {
                   }
                 },
                 Ok(None) => {
+                  tracing::error!("unreachable recv_result reached??");
                   unreachable!();
                 },
                 Err(e) => {

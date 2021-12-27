@@ -23,7 +23,6 @@ use tokio::{
   sync::{oneshot, RwLock},
 };
 use tokio_tungstenite::{
-  connect_async,
   tungstenite::{self, Message},
   MaybeTlsStream, WebSocketStream,
 };
@@ -31,6 +30,7 @@ use tracing::{debug, info, warn};
 
 use crate::blockchain::AccountsMap;
 use crate::rpc;
+use crate::stubborn;
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type WsReader = SplitStream<WsStream>;
@@ -80,7 +80,9 @@ impl SolanaChangeListener {
       _ => panic!("unsupported cluster url scheme"),
     };
 
-    let (ws_stream, _) = connect_async(url.clone()).await?;
+    let (ws_stream, _) =
+      stubborn::connect_async(sync_options.ws_connect_timeout, url.clone())
+        .await?;
     let (writer, reader) = ws_stream.split();
     Ok(Self {
       url,
@@ -363,11 +365,17 @@ impl SolanaChangeListener {
     }
   }
 
+  #[tracing::instrument(skip(self))]
   pub async fn reconnect_all(&mut self) -> Result<()> {
     let old_reader = self.reader.take();
     let old_writer = self.writer.take();
 
-    let (ws_stream, _) = connect_async(self.url.clone()).await?;
+    let (ws_stream, _) = stubborn::connect_async(
+      self.sync_options.ws_connect_timeout,
+      self.url.clone(),
+    )
+    .await?;
+
     let (writer, reader) = ws_stream.split();
 
     self.reader = Some(reader);
