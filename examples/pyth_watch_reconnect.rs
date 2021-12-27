@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
 
     if i == 5 {
       // dynamically add new accounts to mirror
+      println!("adding account");
       shadow.add_account(&solusd).await?;
     }
 

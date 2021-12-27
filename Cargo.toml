@@ -1,6 +1,6 @@
 [package]
 name = "solana-shadow"
-version = "0.2.0"
+version = "0.2.1"
 license = "Apache-2.0"
 authors = ["Karim Agha <karim.dev@gmail.com>"]
 description = "Synchronized shadow state of Solana programs available for off-chain processing."
@@ -26,6 +26,7 @@ solana-sdk = "1.8.3"
 solana-client = "1.8.3"
 tokio = { version = "1.13", features = ["full"] }
 tokio-tungstenite = { version = "0.16.1", features = ["native-tls"] }
+tracing-futures = "0.2.5"
 
 [dev-dependencies]
 anyhow = "1"

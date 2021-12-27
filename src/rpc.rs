@@ -19,11 +19,14 @@ where
   T: Send + std::fmt::Debug + 'static,
 {
   let (tx, rx) = channel::<T>();
+
   thread::spawn(move || {
     // TODO: if the sync_code panics this
     //       call will wait forever
     let r = sync_code();
-    tx.send(r).expect("Unable to send oneshot")
+    if let Err(e) = tx.send(r) {
+      tracing::warn!(?e, "build_async: could not oneshot")
+    }
   });
 
   Ok(tokio::time::timeout(timeout, rx).await??)
