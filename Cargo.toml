@@ -1,8 +1,8 @@
 [package]
 name = "solana-shadow"
-version = "0.2.2"
+version = "0.2.3"
 license = "Apache-2.0"
-authors = ["Karim Agha <karim.dev@gmail.com>"]
+authors = ["Karim Agha <karim.dev@gmail.com>", "Marius Ciubotariu <marius.ciubotariu@gmail.com>"]
 description = "Synchronized shadow state of Solana programs available for off-chain processing."
 keywords = ["blockchain", "solana", "web3"]
 homepage = "https://github.com/hubble-markets/solana-shadow"
