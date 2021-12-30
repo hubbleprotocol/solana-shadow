@@ -226,7 +226,7 @@ impl SolanaChangeListener {
     Ok(())
   }
 
-  #[tracing::instrument(skip(self))]
+  #[tracing::instrument(skip(self), level = "debug")]
   pub async fn recv(&mut self) -> Result<Option<AccountUpdate>> {
     loop {
       if let Some(ref mut reader) = self.reader {
