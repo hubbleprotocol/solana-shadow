@@ -1,6 +1,6 @@
 [package]
 name = "solana-shadow"
-version = "0.2.3"
+version = "0.2.4"
 license = "Apache-2.0"
 authors = ["Karim Agha <karim.dev@gmail.com>", "Marius Ciubotariu <marius.ciubotariu@gmail.com>"]
 description = "Synchronized shadow state of Solana programs available for off-chain processing."
