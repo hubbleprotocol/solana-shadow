@@ -77,6 +77,7 @@ impl SolanaChangeListener {
     match url.scheme() {
       "http" => url.set_scheme("ws").unwrap(),
       "https" => url.set_scheme("wss").unwrap(),
+      "ws" | "wss" => (),
       _ => panic!("unsupported cluster url scheme"),
     };
 
