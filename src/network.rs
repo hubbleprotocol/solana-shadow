@@ -6,7 +6,8 @@ pub enum Network {
   Testnet,
   Mainnet,
   Localhost,
-  Custom(String),
+  /// (rpc_url, wss_url)
+  Custom(String, String),
 }
 
 impl Network {
@@ -16,17 +17,15 @@ impl Network {
       Network::Testnet => "https://api.testnet.solana.com",
       Network::Mainnet => "https://api.mainnet-beta.solana.com",
       Network::Localhost => "http://127.0.0.1:8899",
-      Network::Custom(url) => url,
+      Network::Custom(url, _) => url,
     }
     .to_owned()
   }
   pub(crate) fn wss_url(&self) -> String {
     match self {
-      Network::Devnet
-      | Network::Testnet
-      | Network::Mainnet
-      | Network::Custom(_) => self.rpc_url(),
+      Network::Devnet | Network::Testnet | Network::Mainnet => self.rpc_url(),
       Network::Localhost => "http://127.0.0.1:8900".to_owned(),
+      Network::Custom(_, url) => url.to_owned(),
     }
   }
 }
