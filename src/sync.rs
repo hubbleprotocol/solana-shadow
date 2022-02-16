@@ -46,6 +46,7 @@ pub(crate) struct AccountUpdate {
 pub(crate) enum SubRequest {
   Account(Pubkey),
   Program(Pubkey),
+  Ping,
   ReconnectAll,
 }
 
@@ -227,6 +228,20 @@ impl SolanaChangeListener {
     Ok(())
   }
 
+  pub async fn ping(&mut self) -> Result<()> {
+    loop {
+      if let Some(ref mut writer) = self.writer {
+        debug!("ping send over websocket");
+        writer.send(Message::Ping(vec![])).await?;
+        break;
+      } else {
+        debug!("skipping sending no writer available");
+        tokio::task::yield_now().await;
+      }
+    }
+    Ok(())
+  }
+
   #[tracing::instrument(skip(self), level = "debug")]
   pub async fn recv(&mut self) -> Result<Option<AccountUpdate>> {
     loop {
@@ -235,6 +250,20 @@ impl SolanaChangeListener {
           let message = match msg {
             Ok(msg) => match msg {
               Message::Text(text) => Ok(serde_json::from_str(&text)?),
+              Message::Pong(_) => {
+                tracing::trace!("received Pong");
+                continue;
+              }
+              Message::Ping(_) => {
+                if let Some(ref mut writer) = self.writer {
+                  writer.send(Message::Pong(vec![])).await?;
+                  tracing::trace!("received Ping");
+                } else {
+                  warn!("No writer available, cannot reply ping")
+                }
+
+                continue;
+              }
               _ => Err(Error::UnsupportedRpcFormat),
             },
             Err(e) => {
@@ -336,8 +365,8 @@ impl SolanaChangeListener {
                     }
                   }
                 }
-                SubRequest::ReconnectAll => {
-                  // note: we safely ignore this one
+                SubRequest::ReconnectAll | SubRequest::Ping => {
+                  // note: we safely ignore these
                 }
               };
 

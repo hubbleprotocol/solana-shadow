@@ -16,8 +16,9 @@ use tokio::{
     oneshot,
   },
   task::JoinHandle,
+  time::interval,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use tracing_futures::Instrument;
 
 pub(crate) type AccountsMap = DashMap<Pubkey, (Account, bool)>;
@@ -245,13 +246,19 @@ impl BlockchainShadow {
               match subreq {
                 ( SubRequest::Account(pubkey), oneshot ) => {
                     debug!(?pubkey, "subscribe_account recv");
-                    listener.subscribe_account(pubkey, oneshot).await? },
+                    listener.subscribe_account(pubkey, oneshot).await?
+                },
                 ( SubRequest::Program(pubkey), oneshot ) => {
                     debug!(?pubkey, "subscribe_program recv");
-                    listener.subscribe_program(pubkey, oneshot).await? },
+                    listener.subscribe_program(pubkey, oneshot).await?
+                },
                 ( SubRequest::ReconnectAll, _ ) => {
                     debug!("reconnect_all recv");
                     listener.reconnect_all().await?
+                }
+                ( SubRequest::Ping, _ ) => {
+                  debug!("ping recv");
+                  listener.ping().await?
                 }
               }
             }
@@ -265,21 +272,38 @@ impl BlockchainShadow {
   }
 
   async fn create_monitor_worker(&mut self) -> Result<()> {
-    if let Some(every) = self.options.reconnect_every {
-      let channel = self.sub_req.clone();
-      self.monitor_worker = Some(tokio::spawn(
-        async move {
-          loop {
-            tokio::time::sleep(every).await;
-            info!("reestablising connection to solana");
-            if let Err(e) = channel.send((SubRequest::ReconnectAll, None)) {
-              tracing::error!(?e)
-            }
+    let mut ping_timer = interval(Duration::from_secs(5));
+    let reconnect_every = self.options.reconnect_every;
+
+    let channel = self.sub_req.clone();
+
+    let fut = async move {
+      if let Some(every) = reconnect_every {
+        let mut reconnect_timer = interval(every);
+        loop {
+          let req = tokio::select! {
+            _ = ping_timer.tick() => SubRequest::Ping,
+            _ = reconnect_timer.tick() => SubRequest::ReconnectAll,
+          };
+
+          if let Err(e) = channel.send((req, None)) {
+            tracing::error!(?e)
           }
         }
-        .instrument(tracing::debug_span!("monitor_worker_loop")),
-      ));
-    }
+      } else {
+        loop {
+          ping_timer.tick().await;
+          if let Err(e) = channel.send((SubRequest::Ping, None)) {
+            tracing::error!(?e)
+          }
+        }
+      }
+    };
+
+    self.monitor_worker = Some(tokio::spawn(
+      fut.instrument(tracing::debug_span!("monitor_worker_loop")),
+    ));
+
     Ok(())
   }
 }
