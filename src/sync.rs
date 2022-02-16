@@ -127,7 +127,7 @@ impl SolanaChangeListener {
       "id": reqid,
       "method": "accountSubscribe",
       "params": [account.to_string(), {
-        "encoding": "jsonParsed",
+        "encoding": "base64+zstd",
         "commitment": self.sync_options.commitment.to_string(),
       }]
     });
@@ -191,7 +191,7 @@ impl SolanaChangeListener {
       "id": reqid,
       "method": "programSubscribe",
       "params": [account.to_string(), {
-        "encoding": "jsonParsed",
+        "encoding": "base64+zstd",
         "commitment": self.sync_options.commitment.to_string()
       }]
     });

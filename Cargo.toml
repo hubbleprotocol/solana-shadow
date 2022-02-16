@@ -1,35 +1,36 @@
 [package]
-name = "solana-shadow"
-version = "0.2.4"
-license = "Apache-2.0"
 authors = ["Karim Agha <karim.dev@gmail.com>", "Marius Ciubotariu <marius.ciubotariu@gmail.com>"]
 description = "Synchronized shadow state of Solana programs available for off-chain processing."
-keywords = ["blockchain", "solana", "web3"]
-homepage = "https://github.com/hubble-markets/solana-shadow"
-repository = "https://github.com/hubble-markets/solana-shadow"
 edition = "2018"
+homepage = "https://github.com/hubble-markets/solana-shadow"
 include = ["examples/**/*", "src/**/*", "LICENSE", "README.md", "CHANGELOG.md"]
+keywords = ["blockchain", "solana", "web3"]
+license = "Apache-2.0"
+name = "solana-shadow"
+repository = "https://github.com/hubble-markets/solana-shadow"
+version = "0.2.4"
 
 [dependencies]
-bs58 = "0.4"
-borsh = "0.9"
-dashmap = "5.0.0"
-thiserror = "1"
-futures = "0.3"
-tracing = "0.1.29"
 base64 = "0.13"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+borsh = "0.9"
 borsh-derive = "0.9"
+bs58 = "0.4"
+dashmap = "5.0.0"
+futures = "0.3"
 hyper-tls = "0.5.0"
-solana-sdk = "1.8.3"
+serde = {version = "1", features = ["derive"]}
+serde_json = "1"
 solana-client = "1.8.3"
-tokio = { version = "1.13", features = ["full"] }
-tokio-tungstenite = { version = "0.16.1", features = ["native-tls"] }
+solana-sdk = "1.8.3"
+thiserror = "1"
+tokio = {version = "1.13", features = ["full"]}
+tokio-tungstenite = {version = "0.16.1", features = ["native-tls"]}
+tracing = "0.1.29"
 tracing-futures = "0.2.5"
+zstd = "0.9"
 
 [dev-dependencies]
 anyhow = "1"
-rand = "0.8"
 pyth-client = "0.2.2"
-tracing-subscriber = { version = "0.3.1", features = ["env-filter"] }
+rand = "0.8"
+tracing-subscriber = {version = "0.3.1", features = ["env-filter"]}

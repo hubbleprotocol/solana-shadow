@@ -49,6 +49,9 @@ pub enum Error {
 
   #[error("Internal synchronization error")]
   InternalSynchronizationError(#[from] JoinError),
+
+  #[error("Io Error")]
+  StdIoError(#[from] std::io::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
