@@ -16,7 +16,7 @@ use tokio::{
     oneshot,
   },
   task::JoinHandle,
-  time::interval,
+  time::{interval, interval_at, Instant},
 };
 use tracing::{debug, error};
 use tracing_futures::Instrument;
@@ -223,22 +223,22 @@ impl BlockchainShadow {
           SolanaChangeListener::new(client, accs_ref.clone(), options).await?;
         loop {
           tokio::select! {
-            recv_result = listener.recv() => {
-              match recv_result {
-                Ok(Some(AccountUpdate { pubkey, account })) => {
-                  debug!("account {} updated", &pubkey);
-                  accs_ref.insert(pubkey, ( account.clone(), true ));
-                  if updates_tx.receiver_count() != 0 {
-                    updates_tx.send((pubkey, account)).unwrap();
-                  }
-                },
-                Ok(None) => {
-                  tracing::error!("unreachable recv_result reached??");
-                  unreachable!();
-                },
+            message = listener.recv() => {
+              let message = match message {
+                Ok(m) => m,
                 Err(e) => {
                   error!("error in the sync worker thread: {:?}", e);
                   listener.reconnect_all().await?;
+                  continue;
+                }
+              };
+
+              let account_update = listener.process_message(message).await?;
+              if let Some(AccountUpdate { pubkey, account }) = account_update {
+                debug!("account {} updated", &pubkey);
+                accs_ref.insert(pubkey, ( account.clone(), true ));
+                if updates_tx.receiver_count() != 0 {
+                  updates_tx.send((pubkey, account)).unwrap();
                 }
               }
             },
@@ -279,7 +279,7 @@ impl BlockchainShadow {
 
     let fut = async move {
       if let Some(every) = reconnect_every {
-        let mut reconnect_timer = interval(every);
+        let mut reconnect_timer = interval_at(Instant::now() + every, every);
         loop {
           let req = tokio::select! {
             _ = ping_timer.tick() => SubRequest::Ping,
