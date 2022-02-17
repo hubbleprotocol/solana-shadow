@@ -4,10 +4,10 @@ use crate::{
   Error, Network, Result,
 };
 use dashmap::DashMap;
+use futures::future::try_join_all;
 use solana_sdk::{
   account::Account, commitment_config::CommitmentLevel, pubkey::Pubkey,
 };
-
 use std::{sync::Arc, time::Duration};
 use tokio::{
   sync::{
@@ -110,13 +110,23 @@ impl BlockchainShadow {
     &mut self,
     accounts: &[Pubkey],
   ) -> Result<Vec<Option<Account>>> {
-    let mut result = Vec::new();
+    let mut results = Vec::new();
 
     for key in accounts {
-      result.push(self.add_account(key).await?);
-    }
+      let (oneshot, result) = oneshot::channel::<Vec<Account>>();
 
-    Ok(result)
+      self
+        .sub_req
+        .clone()
+        .send((SubRequest::Account(*key), Some(oneshot)))
+        .map_err(|_| Error::InternalError)?;
+
+      results.push(result);
+    }
+    let results = try_join_all(results).await?;
+    let results = results.into_iter().map(|mut v| v.pop()).collect();
+
+    Ok(results)
   }
 
   pub async fn add_account(
