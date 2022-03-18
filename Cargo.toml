@@ -8,7 +8,7 @@ keywords = ["blockchain", "solana", "web3"]
 license = "Apache-2.0"
 name = "solana-shadow"
 repository = "https://github.com/hubble-markets/solana-shadow"
-version = "0.2.4"
+version = "0.2.5"
 
 [dependencies]
 base64 = "0.13"
