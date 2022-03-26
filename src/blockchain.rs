@@ -4,10 +4,10 @@ use crate::{
   Error, Network, Result,
 };
 use dashmap::DashMap;
+use futures::future::try_join_all;
 use solana_sdk::{
   account::Account, commitment_config::CommitmentLevel, pubkey::Pubkey,
 };
-
 use std::{sync::Arc, time::Duration};
 use tokio::{
   sync::{
@@ -16,8 +16,9 @@ use tokio::{
     oneshot,
   },
   task::JoinHandle,
+  time::{interval, interval_at, Instant},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 use tracing_futures::Instrument;
 
 pub(crate) type AccountsMap = DashMap<Pubkey, (Account, bool)>;
@@ -109,13 +110,23 @@ impl BlockchainShadow {
     &mut self,
     accounts: &[Pubkey],
   ) -> Result<Vec<Option<Account>>> {
-    let mut result = Vec::new();
+    let mut results = Vec::new();
 
     for key in accounts {
-      result.push(self.add_account(key).await?);
-    }
+      let (oneshot, result) = oneshot::channel::<Vec<Account>>();
 
-    Ok(result)
+      self
+        .sub_req
+        .clone()
+        .send((SubRequest::Account(*key), Some(oneshot)))
+        .map_err(|_| Error::InternalError)?;
+
+      results.push(result);
+    }
+    let results = try_join_all(results).await?;
+    let results = results.into_iter().map(|mut v| v.pop()).collect();
+
+    Ok(results)
   }
 
   pub async fn add_account(
@@ -222,22 +233,22 @@ impl BlockchainShadow {
           SolanaChangeListener::new(client, accs_ref.clone(), options).await?;
         loop {
           tokio::select! {
-            recv_result = listener.recv() => {
-              match recv_result {
-                Ok(Some(AccountUpdate { pubkey, account })) => {
-                  debug!("account {} updated", &pubkey);
-                  accs_ref.insert(pubkey, ( account.clone(), true ));
-                  if updates_tx.receiver_count() != 0 {
-                    updates_tx.send((pubkey, account)).unwrap();
-                  }
-                },
-                Ok(None) => {
-                  tracing::error!("unreachable recv_result reached??");
-                  unreachable!();
-                },
+            message = listener.recv() => {
+              let message = match message {
+                Ok(m) => m,
                 Err(e) => {
                   error!("error in the sync worker thread: {:?}", e);
                   listener.reconnect_all().await?;
+                  continue;
+                }
+              };
+
+              let account_update = listener.process_message(message).await?;
+              if let Some(AccountUpdate { pubkey, account }) = account_update {
+                debug!("account {} updated", &pubkey);
+                accs_ref.insert(pubkey, ( account.clone(), true ));
+                if updates_tx.receiver_count() != 0 {
+                  updates_tx.send((pubkey, account)).unwrap();
                 }
               }
             },
@@ -245,13 +256,19 @@ impl BlockchainShadow {
               match subreq {
                 ( SubRequest::Account(pubkey), oneshot ) => {
                     debug!(?pubkey, "subscribe_account recv");
-                    listener.subscribe_account(pubkey, oneshot).await? },
+                    listener.subscribe_account(pubkey, oneshot).await?
+                },
                 ( SubRequest::Program(pubkey), oneshot ) => {
                     debug!(?pubkey, "subscribe_program recv");
-                    listener.subscribe_program(pubkey, oneshot).await? },
+                    listener.subscribe_program(pubkey, oneshot).await?
+                },
                 ( SubRequest::ReconnectAll, _ ) => {
                     debug!("reconnect_all recv");
                     listener.reconnect_all().await?
+                }
+                ( SubRequest::Ping, _ ) => {
+                  debug!("ping recv");
+                  listener.ping().await?
                 }
               }
             }
@@ -265,21 +282,38 @@ impl BlockchainShadow {
   }
 
   async fn create_monitor_worker(&mut self) -> Result<()> {
-    if let Some(every) = self.options.reconnect_every {
-      let channel = self.sub_req.clone();
-      self.monitor_worker = Some(tokio::spawn(
-        async move {
-          loop {
-            tokio::time::sleep(every).await;
-            info!("reestablising connection to solana");
-            if let Err(e) = channel.send((SubRequest::ReconnectAll, None)) {
-              tracing::error!(?e)
-            }
+    let mut ping_timer = interval(Duration::from_secs(5));
+    let reconnect_every = self.options.reconnect_every;
+
+    let channel = self.sub_req.clone();
+
+    let fut = async move {
+      if let Some(every) = reconnect_every {
+        let mut reconnect_timer = interval_at(Instant::now() + every, every);
+        loop {
+          let req = tokio::select! {
+            _ = ping_timer.tick() => SubRequest::Ping,
+            _ = reconnect_timer.tick() => SubRequest::ReconnectAll,
+          };
+
+          if let Err(e) = channel.send((req, None)) {
+            tracing::error!(?e)
           }
         }
-        .instrument(tracing::debug_span!("monitor_worker_loop")),
-      ));
-    }
+      } else {
+        loop {
+          ping_timer.tick().await;
+          if let Err(e) = channel.send((SubRequest::Ping, None)) {
+            tracing::error!(?e)
+          }
+        }
+      }
+    };
+
+    self.monitor_worker = Some(tokio::spawn(
+      fut.instrument(tracing::debug_span!("monitor_worker_loop")),
+    ));
+
     Ok(())
   }
 }

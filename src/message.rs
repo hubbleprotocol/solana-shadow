@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, str::FromStr};
+use std::{convert::TryFrom, io::Read, str::FromStr};
 
 use serde::Deserialize;
 use solana_sdk::{account::Account, pubkey::Pubkey};
@@ -77,10 +77,20 @@ impl TryFrom<AccountRepresentation> for Account {
     let data = match &repr.data[..] {
       [content, format] => match &format[..] {
         "base64" => base64::decode(&content)?,
+        "base64+zstd" => {
+          let zstd_data = base64::decode(content.as_bytes())?;
+
+          let mut data = vec![];
+          let mut reader =
+            zstd::stream::read::Decoder::new(zstd_data.as_slice())?;
+          reader.read_to_end(&mut data)?;
+          data
+        }
         _ => vec![],
       },
       _ => vec![],
     };
+
     Ok(Account {
       lamports: repr.lamports,
       data,
